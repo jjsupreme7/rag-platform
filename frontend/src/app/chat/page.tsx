@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Send } from "lucide-react";
+import { Send, Plus, Trash2, MessageSquare } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import {
   sendChatMessage,
   type ChatMessage,
@@ -17,11 +18,99 @@ interface Message {
   sources?: ChatSource[];
 }
 
+interface Conversation {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: string;
+}
+
+const STORAGE_KEY = "rag-conversations";
+
+const SUGGESTED_QUESTIONS = [
+  "What is the M&E exemption under RCW 82.08.02565?",
+  "How does the multi-point use exemption work for software licenses?",
+  "Is SaaS subject to retail sales tax in Washington?",
+  "When can a buyer claim a refund for over-collected sales tax?",
+];
+
+function loadConversations(): Conversation[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveConversations(convos: Conversation[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(convos));
+}
+
 export default function ChatPage() {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Load conversations from localStorage on mount
+  useEffect(() => {
+    setConversations(loadConversations());
+  }, []);
+
+  // Save conversations whenever they change
+  const persistConversations = useCallback(
+    (convos: Conversation[]) => {
+      setConversations(convos);
+      saveConversations(convos);
+    },
+    [],
+  );
+
+  // Save current messages to the active conversation
+  const saveCurrentMessages = useCallback(
+    (msgs: Message[]) => {
+      if (!activeId || msgs.length === 0) return;
+      const updated = conversations.map((c) =>
+        c.id === activeId ? { ...c, messages: msgs } : c,
+      );
+      persistConversations(updated);
+    },
+    [activeId, conversations, persistConversations],
+  );
+
+  function startNewConversation() {
+    // Save current before switching
+    if (activeId && messages.length > 0) {
+      saveCurrentMessages(messages);
+    }
+    setMessages([]);
+    setActiveId(null);
+    setInput("");
+  }
+
+  function switchConversation(id: string) {
+    // Save current first
+    if (activeId && messages.length > 0) {
+      saveCurrentMessages(messages);
+    }
+    const convo = conversations.find((c) => c.id === id);
+    if (convo) {
+      setMessages(convo.messages);
+      setActiveId(id);
+    }
+  }
+
+  function deleteConversation(id: string) {
+    const updated = conversations.filter((c) => c.id !== id);
+    persistConversations(updated);
+    if (activeId === id) {
+      setMessages([]);
+      setActiveId(null);
+    }
+  }
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -30,14 +119,28 @@ export default function ChatPage() {
     const userMessage = input.trim();
     setInput("");
 
+    // Create conversation if new
+    let currentId = activeId;
+    if (!currentId) {
+      currentId = Date.now().toString();
+      const newConvo: Conversation = {
+        id: currentId,
+        title: userMessage.slice(0, 60) + (userMessage.length > 60 ? "..." : ""),
+        messages: [],
+        createdAt: new Date().toISOString(),
+      };
+      const updated = [newConvo, ...conversations];
+      persistConversations(updated);
+      setActiveId(currentId);
+    }
+
     // Add user message
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
 
-    // Add empty assistant message that we'll stream into
+    // Add empty assistant message to stream into
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
     setLoading(true);
 
-    // Build history (exclude the empty assistant message we just added)
     const history: ChatMessage[] = messages.map((m) => ({
       role: m.role,
       content: m.content,
@@ -66,13 +169,20 @@ export default function ChatPage() {
           sources = s;
         },
       );
-      // Attach sources to final message
+      // Attach sources and save
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           ...updated[updated.length - 1],
           sources,
         };
+        // Save to localStorage
+        const convos = loadConversations();
+        const savedConvos = convos.map((c) =>
+          c.id === currentId ? { ...c, messages: updated } : c,
+        );
+        saveConversations(savedConvos);
+        setConversations(savedConvos);
         return updated;
       });
     } catch (err) {
@@ -90,73 +200,138 @@ export default function ChatPage() {
     }
   }
 
+  function handleSuggestedQuestion(question: string) {
+    setInput(question);
+    // Submit via a synthetic form event after a tick
+    setTimeout(() => {
+      const form = document.querySelector("form");
+      if (form) form.requestSubmit();
+    }, 50);
+  }
+
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)]">
-      <h2 className="text-2xl font-bold mb-4">Chat</h2>
+    <div className="flex h-[calc(100vh-8rem)]">
+      {/* Conversation sidebar */}
+      <div className="w-64 border-r border-border pr-3 mr-4 flex flex-col shrink-0">
+        <Button
+          variant="outline"
+          className="w-full mb-3 justify-start gap-2"
+          onClick={startNewConversation}
+        >
+          <Plus className="h-4 w-4" />
+          New conversation
+        </Button>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4">
-        {messages.length === 0 && (
-          <div className="text-center text-muted-foreground mt-20">
-            <p className="text-lg font-medium">Ask a question</p>
-            <p className="text-sm mt-1">
-              Your knowledge base has 11,000+ tax law chunks ready to search.
-            </p>
-          </div>
-        )}
-
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-          >
+        <div className="flex-1 overflow-y-auto space-y-1">
+          {conversations.map((c) => (
             <div
-              className={`max-w-[80%] rounded-lg px-4 py-3 ${
-                msg.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted"
+              key={c.id}
+              className={`group flex items-center gap-2 rounded-md px-2 py-2 text-sm cursor-pointer hover:bg-muted ${
+                activeId === c.id ? "bg-muted font-medium" : ""
               }`}
+              onClick={() => switchConversation(c.id)}
             >
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-              {msg.role === "assistant" &&
-                msg.sources &&
-                msg.sources.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-3 pt-2 border-t border-border/50">
-                    <span className="text-xs text-muted-foreground mr-1">
-                      Sources:
-                    </span>
-                    {msg.sources
-                      .filter(
-                        (s, idx, arr) =>
-                          arr.findIndex((x) => x.citation === s.citation) === idx,
-                      )
-                      .slice(0, 5)
-                      .map((s, j) => (
-                        <Badge key={j} variant="outline" className="text-xs">
-                          {s.citation} ({(s.similarity * 100).toFixed(0)}%)
-                        </Badge>
-                      ))}
-                  </div>
-                )}
+              <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate flex-1">{c.title}</span>
+              <button
+                className="opacity-0 group-hover:opacity-100 hover:text-destructive"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteConversation(c.id);
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
             </div>
-          </div>
-        ))}
-        <div ref={bottomRef} />
+          ))}
+        </div>
       </div>
 
-      {/* Input */}
-      <form onSubmit={handleSend} className="flex gap-2">
-        <Input
-          placeholder="Ask about Washington tax law..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={loading}
-          className="flex-1"
-        />
-        <Button type="submit" disabled={loading || !input.trim()}>
-          <Send className="h-4 w-4" />
-        </Button>
-      </form>
+      {/* Main chat area */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto space-y-4 mb-4">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center mt-16">
+              <p className="text-lg font-medium text-muted-foreground">
+                Ask about Washington tax law
+              </p>
+              <p className="text-sm text-muted-foreground mt-1 mb-6">
+                Your knowledge base has 11,000+ tax law chunks ready to search.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl">
+                {SUGGESTED_QUESTIONS.map((q, i) => (
+                  <button
+                    key={i}
+                    className="text-left text-sm border border-border rounded-lg px-4 py-3 hover:bg-muted transition-colors"
+                    onClick={() => handleSuggestedQuestion(q)}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {messages.map((msg, i) => (
+            <div
+              key={i}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[80%] rounded-lg px-4 py-3 ${
+                  msg.role === "user"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted"
+                }`}
+              >
+                {msg.role === "user" ? (
+                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                ) : (
+                  <div className="text-sm prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  </div>
+                )}
+                {msg.role === "assistant" &&
+                  msg.sources &&
+                  msg.sources.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-3 pt-2 border-t border-border/50">
+                      <span className="text-xs text-muted-foreground mr-1">
+                        Sources:
+                      </span>
+                      {msg.sources
+                        .filter(
+                          (s, idx, arr) =>
+                            arr.findIndex((x) => x.citation === s.citation) === idx,
+                        )
+                        .slice(0, 5)
+                        .map((s, j) => (
+                          <Badge key={j} variant="outline" className="text-xs">
+                            {s.citation} ({(s.similarity * 100).toFixed(0)}%)
+                          </Badge>
+                        ))}
+                    </div>
+                  )}
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input */}
+        <form onSubmit={handleSend} className="flex gap-2">
+          <Input
+            placeholder="Ask about Washington tax law..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={loading}
+            className="flex-1"
+          />
+          <Button type="submit" disabled={loading || !input.trim()}>
+            <Send className="h-4 w-4" />
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }
