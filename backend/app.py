@@ -78,11 +78,18 @@ def list_documents(
 @app.get("/api/documents/categories")
 def get_categories():
     sb = get_supabase()
-    r = sb.table("knowledge_documents").select("law_category", count="exact").execute()
     counts: dict[str, int] = {}
-    for row in r.data or []:
-        cat = row.get("law_category") or "Other"
-        counts[cat] = counts.get(cat, 0) + 1
+    offset = 0
+    batch = 1000
+    while True:
+        r = sb.table("knowledge_documents").select("law_category").range(offset, offset + batch - 1).execute()
+        rows = r.data or []
+        for row in rows:
+            cat = row.get("law_category") or "Other"
+            counts[cat] = counts.get(cat, 0) + 1
+        if len(rows) < batch:
+            break
+        offset += batch
     return {"categories": counts}
 
 
