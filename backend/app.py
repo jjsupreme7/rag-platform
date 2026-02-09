@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 
 from fastapi import FastAPI, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +22,7 @@ def get_openai() -> OpenAI:
     return _openai
 
 
-app = FastAPI(title="RAG Platform API", version="0.2.0")
+app = FastAPI(title="RAG Platform API", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,6 +34,10 @@ app.add_middleware(
 )
 
 
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+
 @app.get("/health")
 def health():
     return {
@@ -43,24 +48,94 @@ def health():
     }
 
 
+# ---------------------------------------------------------------------------
+# Projects CRUD
+# ---------------------------------------------------------------------------
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    chat_model: str = "gpt-5.2"
+    embedding_model: str = "text-embedding-3-small"
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    chat_model: Optional[str] = None
+    embedding_model: Optional[str] = None
+
+
+@app.get("/api/projects")
+def list_projects():
+    sb = get_supabase()
+    r = sb.table("projects").select("*").order("created_at").execute()
+    return r.data or []
+
+
+@app.post("/api/projects")
+def create_project(req: ProjectCreate):
+    sb = get_supabase()
+    r = sb.table("projects").insert(req.model_dump()).execute()
+    return r.data[0]
+
+
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: str):
+    sb = get_supabase()
+    r = sb.table("projects").select("*").eq("id", project_id).single().execute()
+    return r.data
+
+
+@app.patch("/api/projects/{project_id}")
+def update_project(project_id: str, req: ProjectUpdate):
+    sb = get_supabase()
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        return get_project(project_id)
+    r = sb.table("projects").update(updates).eq("id", project_id).execute()
+    return r.data[0]
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str):
+    sb = get_supabase()
+    sb.table("projects").delete().eq("id", project_id).execute()
+    return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
 @app.get("/api/stats")
-def get_stats():
+def get_stats(project_id: str | None = Query(None)):
     sb = get_supabase()
     counts = {}
     for table in ["knowledge_documents", "tax_law_chunks", "vendor_background_chunks", "rcw_chunks"]:
         try:
-            r = sb.table(table).select("id", count="exact").limit(0).execute()
+            q = sb.table(table).select("id", count="exact")
+            if project_id:
+                q = q.eq("project_id", project_id)
+            r = q.limit(0).execute()
             counts[table] = r.count or 0
         except Exception:
             counts[table] = None
     return counts
 
 
+# ---------------------------------------------------------------------------
+# Documents
+# ---------------------------------------------------------------------------
+
 @app.get("/api/documents")
 def list_documents(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     category: str | None = Query(None),
+    project_id: str | None = Query(None),
 ):
     sb = get_supabase()
     query = sb.table("knowledge_documents").select(
@@ -68,6 +143,8 @@ def list_documents(
         "total_chunks, processing_status, created_at, topic_tags",
         count="exact",
     )
+    if project_id:
+        query = query.eq("project_id", project_id)
     if category:
         query = query.eq("law_category", category)
     query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
@@ -76,13 +153,16 @@ def list_documents(
 
 
 @app.get("/api/documents/categories")
-def get_categories():
+def get_categories(project_id: str | None = Query(None)):
     sb = get_supabase()
     counts: dict[str, int] = {}
     offset = 0
     batch = 1000
     while True:
-        r = sb.table("knowledge_documents").select("law_category").range(offset, offset + batch - 1).execute()
+        q = sb.table("knowledge_documents").select("law_category")
+        if project_id:
+            q = q.eq("project_id", project_id)
+        r = q.range(offset, offset + batch - 1).execute()
         rows = r.data or []
         for row in rows:
             cat = row.get("law_category") or "Other"
@@ -103,34 +183,51 @@ def get_document(doc_id: str):
     return {"document": r.data, "chunks": chunks.data}
 
 
+# ---------------------------------------------------------------------------
+# Ingest
+# ---------------------------------------------------------------------------
+
 @app.post("/api/ingest/pdf")
 async def upload_pdf(
     file: UploadFile = File(...),
     category: str = Form("Other"),
     citation: str = Form(""),
+    project_id: str = Form(""),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         return {"status": "error", "error": "Only PDF files are supported"}
     file_bytes = await file.read()
-    result = ingest_pdf(file_bytes, file.filename, category, citation or None)
+    result = ingest_pdf(
+        file_bytes, file.filename, category, citation or None,
+        project_id=project_id or None,
+    )
     return result
 
+
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
 
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
     threshold: float = 0.3
+    project_id: str | None = None
 
 
 @app.post("/api/search")
 def search(req: SearchRequest):
-    results = retrieve(req.query, req.top_k)
+    results = retrieve(req.query, req.top_k, project_id=req.project_id)
     return {
         "query": req.query,
         "results": results,
         "count": len(results),
     }
 
+
+# ---------------------------------------------------------------------------
+# Chat
+# ---------------------------------------------------------------------------
 
 class ChatMessage(BaseModel):
     role: str
@@ -141,6 +238,10 @@ class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
     top_k: int = 6
+    project_id: str | None = None
+
+
+DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant with access to a knowledge base. Answer questions based on the provided source documents. If sources are insufficient, say so clearly. Cite sources using [Source N] notation. Be concise and direct."""
 
 
 def _build_rag_prompt(chunks: list[dict]) -> str:
@@ -159,35 +260,33 @@ def _build_rag_prompt(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-SYSTEM_PROMPT = """You are a Washington State tax law expert assistant. You help users understand WA tax law including B&O tax, retail sales tax, use tax, and related exemptions.
-
-Your knowledge base contains:
-- Revised Code of Washington (RCW) chapters 82.04, 82.08, 82.12
-- Washington Administrative Code (WAC) Title 458
-- Excise Tax Advisories (ETAs) from the Department of Revenue
-- Tax Determinations (WTDs) from the Appeals Division
-- Special Notices, Tax Topics, and Industry Guides
-
-Rules:
-- Base your answers on the provided source documents. If sources are insufficient, say so clearly.
-- Cite sources using [Source N] notation. Always include the specific RCW, WAC, or ETA number when available.
-- Distinguish between statutes (RCW), regulations (WAC), and agency guidance (ETA/WTD). Statutes are the highest authority.
-- When discussing exemptions, specify whether they apply to retail sales tax (RCW 82.08), use tax (RCW 82.12), or both.
-- Note when law has changed over time. ESSB 5814 (effective October 1, 2025) significantly changed taxation of services.
-- Be precise with legal terminology. For example, distinguish "digital automated services" from "custom software" as they have different tax treatments.
-- Be concise and direct."""
-
-
 @app.post("/api/chat")
 def chat(req: ChatRequest):
+    sb = get_supabase()
+
+    # Load project-specific settings
+    system_prompt = DEFAULT_SYSTEM_PROMPT
+    chat_model = settings.CHAT_MODEL
+    if req.project_id:
+        try:
+            project = sb.table("projects").select(
+                "system_prompt, chat_model"
+            ).eq("id", req.project_id).single().execute()
+            if project.data.get("system_prompt"):
+                system_prompt = project.data["system_prompt"]
+            if project.data.get("chat_model"):
+                chat_model = project.data["chat_model"]
+        except Exception:
+            pass
+
     # 1. Retrieve relevant chunks via hybrid search + reranking
-    chunks = retrieve(req.message, req.top_k)
+    chunks = retrieve(req.message, req.top_k, project_id=req.project_id)
 
     # 2. Build context
     context = _build_rag_prompt(chunks)
 
     # 3. Build messages for OpenAI
-    messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\nRetrieved sources:\n\n" + context}]
+    messages = [{"role": "system", "content": system_prompt + "\n\nRetrieved sources:\n\n" + context}]
     for msg in req.history:
         messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": req.message})
@@ -198,7 +297,7 @@ def chat(req: ChatRequest):
     def generate():
         try:
             stream = client.chat.completions.create(
-                model=settings.CHAT_MODEL,
+                model=chat_model,
                 max_completion_tokens=2048,
                 messages=messages,
                 stream=True,
@@ -210,7 +309,7 @@ def chat(req: ChatRequest):
         except Exception as e:
             yield f"\n\n[Error: {e}]"
 
-    # 6. Return sources metadata in header
+    # 5. Return sources metadata in header
     sources = [
         {"citation": c.get("citation", ""), "similarity": c.get("similarity", 0)}
         for c in chunks

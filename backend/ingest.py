@@ -122,6 +122,7 @@ def ingest_pdf(
     filename: str,
     category: str = "Other",
     citation: str | None = None,
+    project_id: str | None = None,
 ) -> dict:
     """
     Full ingestion pipeline: PDF → text → chunks → embeddings → Supabase.
@@ -144,16 +145,19 @@ def ingest_pdf(
     title = citation or filename.replace(".pdf", "").replace("_", " ")
     sb = get_supabase()
 
+    doc_row = {
+        "title": title,
+        "document_type": "tax_law",
+        "source_file": filename,
+        "citation": citation or title,
+        "law_category": category,
+        "total_chunks": len(chunks),
+        "processing_status": "processing",
+    }
+    if project_id:
+        doc_row["project_id"] = project_id
     try:
-        doc_result = sb.table("knowledge_documents").insert({
-            "title": title,
-            "document_type": "tax_law",
-            "source_file": filename,
-            "citation": citation or title,
-            "law_category": category,
-            "total_chunks": len(chunks),
-            "processing_status": "processing",
-        }).execute()
+        doc_result = sb.table("knowledge_documents").insert(doc_row).execute()
         doc_id = doc_result.data[0]["id"]
     except Exception as e:
         return {"document_id": None, "title": title, "chunks_created": 0,
@@ -165,15 +169,18 @@ def ingest_pdf(
         embedding = get_embedding(chunk_content)
         if not embedding:
             continue
+        chunk_row = {
+            "document_id": doc_id,
+            "chunk_text": chunk_content,
+            "chunk_number": i,
+            "citation": citation or title,
+            "law_category": category,
+            "embedding": embedding,
+        }
+        if project_id:
+            chunk_row["project_id"] = project_id
         try:
-            sb.table("tax_law_chunks").insert({
-                "document_id": doc_id,
-                "chunk_text": chunk_content,
-                "chunk_number": i,
-                "citation": citation or title,
-                "law_category": category,
-                "embedding": embedding,
-            }).execute()
+            sb.table("tax_law_chunks").insert(chunk_row).execute()
             inserted += 1
         except Exception as e:
             print(f"Chunk insert error: {e}")

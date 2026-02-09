@@ -22,35 +22,37 @@ def embed_query(query: str) -> list[float]:
 
 
 def vector_search(
-    embedding: list[float], top_k: int = 10, threshold: float = 0.3
+    embedding: list[float], top_k: int = 10, threshold: float = 0.3,
+    project_id: str | None = None,
 ) -> list[dict]:
     """Vector similarity search via Supabase RPC."""
     sb = get_supabase()
-    r = sb.rpc(
-        "search_tax_law",
-        {
-            "query_embedding": embedding,
-            "match_threshold": threshold,
-            "match_count": top_k,
-        },
-    ).execute()
+    params = {
+        "query_embedding": embedding,
+        "match_threshold": threshold,
+        "match_count": top_k,
+    }
+    if project_id:
+        params["filter_project_id"] = project_id
+    r = sb.rpc("search_tax_law", params).execute()
     return r.data or []
 
 
-def keyword_search(query: str, top_k: int = 10) -> list[dict]:
+def keyword_search(query: str, top_k: int = 10, project_id: str | None = None) -> list[dict]:
     """Full-text keyword search on tax_law_chunks using PostgreSQL websearch."""
     sb = get_supabase()
     try:
-        r = (
+        q = (
             sb.table("tax_law_chunks")
             .select(
                 "id, document_id, chunk_text, citation, section_title, "
                 "law_category, tax_types, source_type"
             )
             .text_search("chunk_text", query, options={"type": "websearch"})
-            .limit(top_k)
-            .execute()
         )
+        if project_id:
+            q = q.eq("project_id", project_id)
+        r = q.limit(top_k).execute()
         results = r.data or []
         for chunk in results:
             chunk.setdefault("similarity", 0.0)
@@ -125,7 +127,7 @@ def rerank_with_llm(query: str, chunks: list[dict], top_k: int = 6) -> list[dict
         return chunks[:top_k]
 
 
-def retrieve(query: str, top_k: int = 6) -> list[dict]:
+def retrieve(query: str, top_k: int = 6, project_id: str | None = None) -> list[dict]:
     """
     Full retrieval pipeline: embed -> hybrid search -> RRF fusion -> LLM rerank.
 
@@ -133,8 +135,8 @@ def retrieve(query: str, top_k: int = 6) -> list[dict]:
     """
     embedding = embed_query(query)
 
-    vec_results = vector_search(embedding, top_k=top_k * 3, threshold=0.3)
-    kw_results = keyword_search(query, top_k=top_k * 3)
+    vec_results = vector_search(embedding, top_k=top_k * 3, threshold=0.3, project_id=project_id)
+    kw_results = keyword_search(query, top_k=top_k * 3, project_id=project_id)
 
     fused = rrf_fuse(vec_results, kw_results)
 

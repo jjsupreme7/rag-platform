@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Database, BookOpen, Building2 } from "lucide-react";
 import { fetchStats } from "@/lib/api";
+import { useProject } from "@/lib/project-context";
 
 const STAT_CARDS = [
   { key: "knowledge_documents", label: "Documents", icon: FileText },
@@ -13,15 +14,17 @@ const STAT_CARDS = [
 ];
 
 export default function DashboardPage() {
+  const { activeProject } = useProject();
   const [stats, setStats] = useState<Record<string, number | null>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchStats()
+    setLoading(true);
+    fetchStats(activeProject?.id)
       .then(setStats)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [activeProject?.id]);
 
   return (
     <div>

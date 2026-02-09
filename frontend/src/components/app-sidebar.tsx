@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Search,
   Settings,
+  ChevronsUpDown,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -22,6 +23,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { useProject } from "@/lib/project-context";
 
 const navItems = [
   { title: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -34,11 +36,35 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const { projects, activeProject, setActiveProject, loading } = useProject();
 
   return (
     <Sidebar>
-      <SidebarHeader className="border-b px-6 py-4">
-        <h1 className="text-lg font-bold">RAG Platform</h1>
+      <SidebarHeader className="border-b px-4 py-3">
+        <label className="text-xs font-medium text-muted-foreground mb-1 block">
+          Project
+        </label>
+        {loading ? (
+          <div className="h-9 rounded-md bg-muted animate-pulse" />
+        ) : (
+          <div className="relative">
+            <select
+              value={activeProject?.id || ""}
+              onChange={(e) => {
+                const p = projects.find((p) => p.id === e.target.value);
+                if (p) setActiveProject(p);
+              }}
+              className="w-full appearance-none rounded-md border border-input bg-background px-3 py-2 pr-8 text-sm font-medium cursor-pointer hover:bg-accent transition-colors"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <ChevronsUpDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          </div>
+        )}
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>

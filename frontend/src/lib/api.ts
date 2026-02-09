@@ -1,10 +1,82 @@
 const API_BASE = "http://localhost:8001";
 
-export async function fetchStats(): Promise<Record<string, number | null>> {
-  const res = await fetch(`${API_BASE}/api/stats`);
+// ---------------------------------------------------------------------------
+// Project CRUD
+// ---------------------------------------------------------------------------
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  system_prompt: string;
+  chat_model: string;
+  embedding_model: string;
+  created_at: string;
+}
+
+export async function fetchProjects(): Promise<Project[]> {
+  const res = await fetch(`${API_BASE}/api/projects`);
+  if (!res.ok) throw new Error("Failed to fetch projects");
+  return res.json();
+}
+
+export async function createProject(data: {
+  name: string;
+  description?: string;
+  system_prompt?: string;
+  chat_model?: string;
+  embedding_model?: string;
+}): Promise<Project> {
+  const res = await fetch(`${API_BASE}/api/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to create project");
+  return res.json();
+}
+
+export async function updateProject(
+  id: string,
+  data: Partial<{
+    name: string;
+    description: string;
+    system_prompt: string;
+    chat_model: string;
+    embedding_model: string;
+  }>
+): Promise<Project> {
+  const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to update project");
+  return res.json();
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete project");
+}
+
+// ---------------------------------------------------------------------------
+// Stats
+// ---------------------------------------------------------------------------
+
+export async function fetchStats(projectId?: string): Promise<Record<string, number | null>> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  const res = await fetch(`${API_BASE}/api/stats?${params}`);
   if (!res.ok) throw new Error("Failed to fetch stats");
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
 
 export interface Document {
   id: string;
@@ -27,17 +99,32 @@ export interface DocumentsResponse {
 export async function fetchDocuments(
   offset = 0,
   limit = 50,
-  category?: string
+  category?: string,
+  projectId?: string
 ): Promise<DocumentsResponse> {
   const params = new URLSearchParams({
     offset: String(offset),
     limit: String(limit),
   });
   if (category) params.set("category", category);
+  if (projectId) params.set("project_id", projectId);
   const res = await fetch(`${API_BASE}/api/documents?${params}`);
   if (!res.ok) throw new Error("Failed to fetch documents");
   return res.json();
 }
+
+export async function fetchCategories(projectId?: string): Promise<Record<string, number>> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  const res = await fetch(`${API_BASE}/api/documents/categories?${params}`);
+  if (!res.ok) throw new Error("Failed to fetch categories");
+  const data = await res.json();
+  return data.categories;
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
 
 export interface SearchResult {
   id: string;
@@ -62,26 +149,21 @@ export interface SearchResponse {
 export async function searchDocuments(
   query: string,
   topK = 5,
-  threshold = 0.3
+  threshold = 0.3,
+  projectId?: string
 ): Promise<SearchResponse> {
   const res = await fetch(`${API_BASE}/api/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, top_k: topK, threshold }),
+    body: JSON.stringify({ query, top_k: topK, threshold, project_id: projectId }),
   });
   if (!res.ok) throw new Error("Failed to search");
   return res.json();
 }
 
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
-export interface ChatSource {
-  citation: string;
-  similarity: number;
-}
+// ---------------------------------------------------------------------------
+// Ingest
+// ---------------------------------------------------------------------------
 
 export interface UploadResult {
   document_id: string | null;
@@ -94,12 +176,14 @@ export interface UploadResult {
 export async function uploadPDF(
   file: File,
   category: string,
-  citation?: string
+  citation?: string,
+  projectId?: string
 ): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("category", category);
   if (citation) form.append("citation", citation);
+  if (projectId) form.append("project_id", projectId);
   const res = await fetch(`${API_BASE}/api/ingest/pdf`, {
     method: "POST",
     body: form,
@@ -108,11 +192,18 @@ export async function uploadPDF(
   return res.json();
 }
 
-export async function fetchCategories(): Promise<Record<string, number>> {
-  const res = await fetch(`${API_BASE}/api/documents/categories`);
-  if (!res.ok) throw new Error("Failed to fetch categories");
-  const data = await res.json();
-  return data.categories;
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatSource {
+  citation: string;
+  similarity: number;
 }
 
 export async function sendChatMessage(
@@ -120,11 +211,12 @@ export async function sendChatMessage(
   history: ChatMessage[],
   onChunk: (text: string) => void,
   onSources: (sources: ChatSource[]) => void,
+  projectId?: string,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, project_id: projectId }),
   });
   if (!res.ok) throw new Error("Failed to send message");
 

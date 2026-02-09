@@ -11,6 +11,7 @@ import {
   type ChatMessage,
   type ChatSource,
 } from "@/lib/api";
+import { useProject } from "@/lib/project-context";
 
 interface Message {
   role: "user" | "assistant";
@@ -25,7 +26,9 @@ interface Conversation {
   createdAt: string;
 }
 
-const STORAGE_KEY = "rag-conversations";
+function getStorageKey(projectId?: string) {
+  return projectId ? `rag-conversations-${projectId}` : "rag-conversations";
+}
 
 const SUGGESTED_QUESTIONS = [
   "What is the M&E exemption under RCW 82.08.02565?",
@@ -34,20 +37,21 @@ const SUGGESTED_QUESTIONS = [
   "When can a buyer claim a refund for over-collected sales tax?",
 ];
 
-function loadConversations(): Conversation[] {
+function loadConversations(projectId?: string): Conversation[] {
   if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(getStorageKey(projectId)) || "[]");
   } catch {
     return [];
   }
 }
 
-function saveConversations(convos: Conversation[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(convos));
+function saveConversations(convos: Conversation[], projectId?: string) {
+  localStorage.setItem(getStorageKey(projectId), JSON.stringify(convos));
 }
 
 export default function ChatPage() {
+  const { activeProject } = useProject();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -55,18 +59,20 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load conversations from localStorage on mount
+  // Load conversations from localStorage on mount or project change
   useEffect(() => {
-    setConversations(loadConversations());
-  }, []);
+    setConversations(loadConversations(activeProject?.id));
+    setMessages([]);
+    setActiveId(null);
+  }, [activeProject?.id]);
 
   // Save conversations whenever they change
   const persistConversations = useCallback(
     (convos: Conversation[]) => {
       setConversations(convos);
-      saveConversations(convos);
+      saveConversations(convos, activeProject?.id);
     },
-    [],
+    [activeProject?.id],
   );
 
   // Save current messages to the active conversation
@@ -168,6 +174,7 @@ export default function ChatPage() {
         (s) => {
           sources = s;
         },
+        activeProject?.id,
       );
       // Attach sources and save
       setMessages((prev) => {
@@ -177,11 +184,11 @@ export default function ChatPage() {
           sources,
         };
         // Save to localStorage
-        const convos = loadConversations();
+        const convos = loadConversations(activeProject?.id);
         const savedConvos = convos.map((c) =>
           c.id === currentId ? { ...c, messages: updated } : c,
         );
-        saveConversations(savedConvos);
+        saveConversations(savedConvos, activeProject?.id);
         setConversations(savedConvos);
         return updated;
       });

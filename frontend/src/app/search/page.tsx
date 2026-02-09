@@ -7,8 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search } from "lucide-react";
 import { searchDocuments, type SearchResult } from "@/lib/api";
+import { useProject } from "@/lib/project-context";
 
 export default function SearchPage() {
+  const { activeProject } = useProject();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -20,7 +22,7 @@ export default function SearchPage() {
     setLoading(true);
     setSearched(true);
     try {
-      const res = await searchDocuments(query, 8);
+      const res = await searchDocuments(query, 8, 0.3, activeProject?.id);
       setResults(res.results);
     } catch (err) {
       console.error(err);

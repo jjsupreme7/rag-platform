@@ -12,10 +12,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchDocuments, fetchCategories, type Document } from "@/lib/api";
+import { useProject } from "@/lib/project-context";
 
 const PAGE_SIZE = 25;
 
 export default function DocumentsPage() {
+  const { activeProject } = useProject();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -23,22 +25,28 @@ export default function DocumentsPage() {
   const [categories, setCategories] = useState<Record<string, number>>({});
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
-  // Load categories once
+  // Reset when project changes
   useEffect(() => {
-    fetchCategories().then(setCategories).catch(console.error);
-  }, []);
+    setPage(0);
+    setSelectedCategory(null);
+  }, [activeProject?.id]);
+
+  // Load categories
+  useEffect(() => {
+    fetchCategories(activeProject?.id).then(setCategories).catch(console.error);
+  }, [activeProject?.id]);
 
   // Load documents when page or category changes
   useEffect(() => {
     setLoading(true);
-    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE, selectedCategory || undefined)
+    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE, selectedCategory || undefined, activeProject?.id)
       .then((r) => {
         setDocuments(r.documents);
         setTotal(r.total);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [page, selectedCategory]);
+  }, [page, selectedCategory, activeProject?.id]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const allCount = Object.values(categories).reduce((a, b) => a + b, 0);

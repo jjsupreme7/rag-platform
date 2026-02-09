@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { uploadPDF } from "@/lib/api";
+import { useProject } from "@/lib/project-context";
 
 const CATEGORIES = [
   "Statute (RCW)",
@@ -18,6 +19,7 @@ const CATEGORIES = [
 ];
 
 export default function IngestPage() {
+  const { activeProject } = useProject();
   const [file, setFile] = useState<File | null>(null);
   const [category, setCategory] = useState("Other");
   const [citation, setCitation] = useState("");
@@ -36,7 +38,7 @@ export default function IngestPage() {
     setUploading(true);
     setResult(null);
     try {
-      const res = await uploadPDF(file, category, citation || undefined);
+      const res = await uploadPDF(file, category, citation || undefined, activeProject?.id);
       setResult(res);
       if (res.status === "success") {
         setFile(null);
