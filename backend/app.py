@@ -1,6 +1,6 @@
 import json
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ from openai import OpenAI
 from config import settings
 from db import get_supabase
 from retrieval import retrieve
+from ingest import ingest_pdf
 
 _openai: OpenAI | None = None
 
@@ -74,6 +75,17 @@ def list_documents(
     return {"documents": r.data, "total": r.count}
 
 
+@app.get("/api/documents/categories")
+def get_categories():
+    sb = get_supabase()
+    r = sb.table("knowledge_documents").select("law_category", count="exact").execute()
+    counts: dict[str, int] = {}
+    for row in r.data or []:
+        cat = row.get("law_category") or "Other"
+        counts[cat] = counts.get(cat, 0) + 1
+    return {"categories": counts}
+
+
 @app.get("/api/documents/{doc_id}")
 def get_document(doc_id: str):
     sb = get_supabase()
@@ -82,6 +94,19 @@ def get_document(doc_id: str):
         "id, chunk_number, chunk_text, citation, section_title, law_category"
     ).eq("document_id", doc_id).order("chunk_number").execute()
     return {"document": r.data, "chunks": chunks.data}
+
+
+@app.post("/api/ingest/pdf")
+async def upload_pdf(
+    file: UploadFile = File(...),
+    category: str = Form("Other"),
+    citation: str = Form(""),
+):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        return {"status": "error", "error": "Only PDF files are supported"}
+    file_bytes = await file.read()
+    result = ingest_pdf(file_bytes, file.filename, category, citation or None)
+    return result
 
 
 class SearchRequest(BaseModel):

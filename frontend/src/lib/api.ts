@@ -83,6 +83,38 @@ export interface ChatSource {
   similarity: number;
 }
 
+export interface UploadResult {
+  document_id: string | null;
+  title: string;
+  chunks_created: number;
+  status: string;
+  error?: string;
+}
+
+export async function uploadPDF(
+  file: File,
+  category: string,
+  citation?: string
+): Promise<UploadResult> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("category", category);
+  if (citation) form.append("citation", citation);
+  const res = await fetch(`${API_BASE}/api/ingest/pdf`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) throw new Error("Failed to upload PDF");
+  return res.json();
+}
+
+export async function fetchCategories(): Promise<Record<string, number>> {
+  const res = await fetch(`${API_BASE}/api/documents/categories`);
+  if (!res.ok) throw new Error("Failed to fetch categories");
+  const data = await res.json();
+  return data.categories;
+}
+
 export async function sendChatMessage(
   message: string,
   history: ChatMessage[],

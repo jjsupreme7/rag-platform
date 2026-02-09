@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fetchDocuments, type Document } from "@/lib/api";
+import { fetchDocuments, fetchCategories, type Document } from "@/lib/api";
 
 const PAGE_SIZE = 25;
 
@@ -20,29 +20,75 @@ export default function DocumentsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState<Record<string, number>>({});
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
+  // Load categories once
+  useEffect(() => {
+    fetchCategories().then(setCategories).catch(console.error);
+  }, []);
+
+  // Load documents when page or category changes
   useEffect(() => {
     setLoading(true);
-    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE)
+    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE, selectedCategory || undefined)
       .then((r) => {
         setDocuments(r.documents);
         setTotal(r.total);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [page]);
+  }, [page, selectedCategory]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const allCount = Object.values(categories).reduce((a, b) => a + b, 0);
+  const sortedCategories = Object.entries(categories).sort(
+    ([, a], [, b]) => b - a
+  );
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-bold">Documents</h2>
           <p className="text-sm text-muted-foreground">
-            {total.toLocaleString()} documents in knowledge base
+            {total.toLocaleString()} documents
+            {selectedCategory ? ` in ${selectedCategory}` : " in knowledge base"}
           </p>
         </div>
+      </div>
+
+      {/* Category filter tabs */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <button
+          onClick={() => {
+            setSelectedCategory(null);
+            setPage(0);
+          }}
+          className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+            selectedCategory === null
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-background border-border hover:bg-accent"
+          }`}
+        >
+          All ({allCount.toLocaleString()})
+        </button>
+        {sortedCategories.map(([cat, count]) => (
+          <button
+            key={cat}
+            onClick={() => {
+              setSelectedCategory(cat);
+              setPage(0);
+            }}
+            className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+              selectedCategory === cat
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background border-border hover:bg-accent"
+            }`}
+          >
+            {cat} ({count.toLocaleString()})
+          </button>
+        ))}
       </div>
 
       {loading ? (
