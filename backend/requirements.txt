@@ -6,3 +6,4 @@ openai==1.59.5
 anthropic==0.42.0
 python-multipart==0.0.20
 pdfplumber==0.11.4
+slowapi==0.1.9

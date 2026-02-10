@@ -1,11 +1,14 @@
 import json
 from typing import Optional
 
-from fastapi import FastAPI, Query, UploadFile, File, Form
+from fastapi import FastAPI, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from openai import OpenAI
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from config import settings
 from db import get_supabase
@@ -22,11 +25,14 @@ def get_openai() -> OpenAI:
     return _openai
 
 
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 app = FastAPI(title="RAG Platform API", version="0.3.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -188,7 +194,9 @@ def get_document(doc_id: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/ingest/pdf")
+@limiter.limit("10/minute")
 async def upload_pdf(
+    request: Request,
     file: UploadFile = File(...),
     category: str = Form("Other"),
     citation: str = Form(""),
@@ -216,7 +224,8 @@ class SearchRequest(BaseModel):
 
 
 @app.post("/api/search")
-def search(req: SearchRequest):
+@limiter.limit("60/minute")
+def search(request: Request, req: SearchRequest):
     results = retrieve(req.query, req.top_k, project_id=req.project_id)
     return {
         "query": req.query,
@@ -261,7 +270,8 @@ def _build_rag_prompt(chunks: list[dict]) -> str:
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest):
+@limiter.limit("20/minute")
+def chat(request: Request, req: ChatRequest):
     sb = get_supabase()
 
     # Load project-specific settings

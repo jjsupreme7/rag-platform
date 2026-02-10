@@ -16,6 +16,11 @@ class Settings:
     RERANK_MODEL: str = os.getenv("RERANK_MODEL", "gpt-4o-mini")
     RAG_SIMILARITY_THRESHOLD: float = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.3"))
     RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "5"))
+    CORS_ORIGINS: list[str] = [
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")
+        if o.strip()
+    ]
 
 
 settings = Settings()
