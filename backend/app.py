@@ -77,7 +77,7 @@ class ProjectUpdate(BaseModel):
 @app.get("/api/projects")
 def list_projects():
     sb = get_supabase()
-    r = sb.table("projects").select("*").order("created_at").execute()
+    r = sb.table("projects").select("*").order("created_at", desc=True).execute()
     return r.data or []
 
 
