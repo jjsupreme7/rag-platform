@@ -221,7 +221,6 @@ export default function ChatPage() {
       {/* Conversation sidebar */}
       <div className="w-64 border-r border-border pr-3 mr-4 flex flex-col shrink-0">
         <Button
-          variant="outline"
           className="w-full mb-3 justify-start gap-2"
           onClick={startNewConversation}
         >
@@ -233,15 +232,17 @@ export default function ChatPage() {
           {conversations.map((c) => (
             <div
               key={c.id}
-              className={`group flex items-center gap-2 rounded-md px-2 py-2 text-sm cursor-pointer hover:bg-muted ${
-                activeId === c.id ? "bg-muted font-medium" : ""
+              className={`group flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm cursor-pointer transition-colors ${
+                activeId === c.id
+                  ? "bg-primary/10 text-primary font-medium"
+                  : "hover:bg-muted"
               }`}
               onClick={() => switchConversation(c.id)}
             >
-              <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <MessageSquare className={`h-3.5 w-3.5 shrink-0 ${activeId === c.id ? "text-primary" : "text-muted-foreground"}`} />
               <span className="truncate flex-1">{c.title}</span>
               <button
-                className="opacity-0 group-hover:opacity-100 hover:text-destructive"
+                className="opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
                 onClick={(e) => {
                   e.stopPropagation();
                   deleteConversation(c.id);
@@ -260,20 +261,23 @@ export default function ChatPage() {
         <div className="flex-1 overflow-y-auto space-y-4 mb-4">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center mt-16">
-              <p className="text-lg font-medium text-muted-foreground">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 mb-4">
+                <MessageSquare className="h-7 w-7 text-primary" />
+              </div>
+              <p className="text-lg font-semibold">
                 Ask about Washington tax law
               </p>
               <p className="text-sm text-muted-foreground mt-1 mb-6">
-                Your knowledge base has 11,000+ tax law chunks ready to search.
+                Your knowledge base is ready to search and answer questions.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-2xl">
                 {SUGGESTED_QUESTIONS.map((q, i) => (
                   <button
                     key={i}
-                    className="text-left text-sm border border-border rounded-lg px-4 py-3 hover:bg-muted transition-colors"
+                    className="text-left text-sm border border-border rounded-xl px-4 py-3.5 hover:border-primary/30 hover:bg-primary/5 transition-all group"
                     onClick={() => handleSuggestedQuestion(q)}
                   >
-                    {q}
+                    <span className="text-muted-foreground group-hover:text-foreground transition-colors">{q}</span>
                   </button>
                 ))}
               </div>
@@ -332,7 +336,7 @@ export default function ChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={loading}
-            className="flex-1"
+            className="flex-1 focus-visible:ring-primary/30 focus-visible:border-primary/50"
           />
           <Button type="submit" disabled={loading || !input.trim()}>
             <Send className="h-4 w-4" />

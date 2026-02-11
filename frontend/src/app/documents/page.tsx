@@ -58,7 +58,7 @@ export default function DocumentsPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-2xl font-bold">Documents</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Documents</h2>
           <p className="text-sm text-muted-foreground">
             {total.toLocaleString()} documents
             {selectedCategory ? ` in ${selectedCategory}` : " in knowledge base"}

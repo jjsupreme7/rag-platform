@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Upload } from "lucide-react";
 import { uploadPDF } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 
@@ -54,35 +55,39 @@ export default function IngestPage() {
 
   return (
     <div className="max-w-2xl">
-      <h2 className="text-2xl font-bold mb-1">Ingest Documents</h2>
+      <h2 className="text-2xl font-bold tracking-tight mb-1">Ingest Documents</h2>
       <p className="text-sm text-muted-foreground mb-6">
         Upload a PDF to parse, chunk, embed, and store in your knowledge base.
       </p>
 
-      <div className="space-y-4">
+      <div className="space-y-5">
         {/* File input */}
         <div>
-          <label className="text-sm font-medium mb-1 block">PDF File</label>
-          <Input
-            ref={inputRef}
-            type="file"
-            accept=".pdf"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-          />
-          {file && (
-            <p className="text-xs text-muted-foreground mt-1">
-              {file.name} ({(file.size / 1024).toFixed(0)} KB)
-            </p>
-          )}
+          <label className="text-sm font-medium mb-1.5 block">PDF File</label>
+          <div className="rounded-xl border-2 border-dashed border-border hover:border-primary/40 transition-colors p-6 text-center">
+            <Upload className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+            <Input
+              ref={inputRef}
+              type="file"
+              accept=".pdf"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="border-0 shadow-none px-0 text-center file:mr-3 file:rounded-lg file:border-0 file:bg-primary file:text-primary-foreground file:px-4 file:py-1.5 file:text-sm file:font-medium file:cursor-pointer hover:file:bg-primary/90"
+            />
+            {file && (
+              <p className="text-xs text-muted-foreground mt-2">
+                {file.name} ({(file.size / 1024).toFixed(0)} KB)
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Category select */}
         <div>
-          <label className="text-sm font-medium mb-1 block">Category</label>
+          <label className="text-sm font-medium mb-1.5 block">Category</label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm cursor-pointer hover:border-primary/40 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
           >
             {CATEGORIES.map((c) => (
               <option key={c} value={c}>
@@ -94,7 +99,7 @@ export default function IngestPage() {
 
         {/* Citation */}
         <div>
-          <label className="text-sm font-medium mb-1 block">
+          <label className="text-sm font-medium mb-1.5 block">
             Citation{" "}
             <span className="text-muted-foreground font-normal">
               (optional)
@@ -104,12 +109,14 @@ export default function IngestPage() {
             placeholder="e.g. RCW 82.08.02565, ETA 3217.2024"
             value={citation}
             onChange={(e) => setCitation(e.target.value)}
+            className="focus-visible:ring-primary/30 focus-visible:border-primary/50"
           />
         </div>
 
         {/* Upload button */}
-        <Button onClick={handleUpload} disabled={!file || uploading}>
-          {uploading ? "Uploading..." : "Upload & Process"}
+        <Button onClick={handleUpload} disabled={!file || uploading} size="lg">
+          <Upload className="h-4 w-4 mr-2" />
+          {uploading ? "Processing..." : "Upload & Process"}
         </Button>
       </div>
 
