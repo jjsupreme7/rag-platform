@@ -123,6 +123,30 @@ export async function fetchCategories(projectId?: string): Promise<Record<string
 }
 
 // ---------------------------------------------------------------------------
+// Document Detail (with chunks)
+// ---------------------------------------------------------------------------
+
+export interface Chunk {
+  id: string;
+  chunk_number: number;
+  chunk_text: string;
+  citation: string;
+  section_title: string | null;
+  law_category: string;
+}
+
+export interface DocumentDetail {
+  document: Document;
+  chunks: Chunk[];
+}
+
+export async function fetchDocument(docId: string): Promise<DocumentDetail> {
+  const res = await fetch(`${API_BASE}/api/documents/${docId}`);
+  if (!res.ok) throw new Error("Failed to fetch document");
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------
 
