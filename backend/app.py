@@ -1,8 +1,11 @@
 import json
+import logging
 import threading
 import time
 import uuid
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -336,10 +339,15 @@ def chat(request: Request, req: ChatRequest):
         messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": req.message})
 
-    # 4. Stream response from OpenAI
+    # 4. Stream response from OpenAI and log to DB
     client = get_openai()
+    local_count = sum(1 for c in chunks if c.get("source", "local") == "local")
+    pplx_count = sum(1 for c in chunks if c.get("source") == "perplexity")
+    started_at = time.time()
 
     def generate():
+        full_response: list[str] = []
+        is_error = False
         try:
             stream = client.chat.completions.create(
                 model=chat_model,
@@ -350,9 +358,36 @@ def chat(request: Request, req: ChatRequest):
             for chunk in stream:
                 text = chunk.choices[0].delta.content
                 if text:
+                    full_response.append(text)
                     yield text
         except Exception as e:
-            yield f"\n\n[Error: {e}]"
+            is_error = True
+            error_text = f"\n\n[Error: {e}]"
+            full_response.append(error_text)
+            yield error_text
+        finally:
+            # Log chat to database
+            response_text = "".join(full_response)
+            elapsed_ms = int((time.time() - started_at) * 1000)
+            try:
+                log_row = {
+                    "question": req.message[:2000],
+                    "question_length": len(req.message),
+                    "answer_length": len(response_text),
+                    "assistant_response": response_text[:10000],
+                    "sources_count": len(chunks),
+                    "sources_json": sources,
+                    "chat_model": chat_model,
+                    "endpoint": "chat",
+                    "response_time_ms": elapsed_ms,
+                    "is_error": is_error,
+                    "error_message": response_text[:500] if is_error else None,
+                }
+                if req.project_id:
+                    log_row["project_id"] = req.project_id
+                sb.table("chat_usage_log").insert(log_row).execute()
+            except Exception:
+                logger.warning("Failed to log chat to database")
 
     # 5. Return sources metadata in header
     sources = [
