@@ -181,6 +181,81 @@ def generate_change_summary(new_urls: list[dict]) -> str | None:
         return None
 
 
+def perplexity_chat_search(query: str) -> list[dict]:
+    """
+    Search dor.wa.gov for a user's chat question via Perplexity sonar.
+    Returns list of {citation, chunk_text, source_url, similarity} in the same
+    format as local RAG chunks so they can be merged directly.
+    """
+    if not settings.PERPLEXITY_API_KEY:
+        return []
+
+    headers = {
+        "Authorization": f"Bearer {settings.PERPLEXITY_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "sonar",
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Washington State tax law research assistant. "
+                    "Answer the question using only official WA state sources. "
+                    "Cite specific dor.wa.gov pages."
+                ),
+            },
+            {"role": "user", "content": query},
+        ],
+        "web_search_options": {
+            "search_domain_filter": ["dor.wa.gov"],
+        },
+    }
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.post(
+                f"{PERPLEXITY_BASE_URL}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        citations = data.get("citations", [])
+
+        # Build chunks from Perplexity response, one per citation
+        results = []
+        seen = set()
+        for citation_url in citations:
+            if "dor.wa.gov" not in urlparse(citation_url).netloc:
+                continue
+            normalized = citation_url.rstrip("/")
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+
+            # Build a citation label from the URL
+            path = urlparse(citation_url).path
+            label = path.split("/")[-1].replace("-", " ").replace("_", " ").replace(".pdf", "").strip()
+            if not label:
+                label = urlparse(citation_url).netloc
+
+            results.append({
+                "citation": label.title() if len(label) < 80 else label[:80],
+                "chunk_text": content[:1500],
+                "source_url": citation_url,
+                "similarity": 0.0,  # No similarity score from Perplexity
+                "source": "perplexity",
+            })
+
+        return results
+    except Exception as e:
+        logger.warning(f"Perplexity chat search failed: {e}")
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Main Orchestrator
 # ---------------------------------------------------------------------------

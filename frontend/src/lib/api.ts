@@ -234,6 +234,7 @@ export interface ChatSource {
   citation: string;
   similarity: number;
   source_url?: string | null;
+  source?: "local" | "perplexity";
 }
 
 export async function sendChatMessage(

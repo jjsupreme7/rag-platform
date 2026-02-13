@@ -4,8 +4,8 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Send, Plus, Trash2, MessageSquare } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { Send, Plus, Trash2, MessageSquare, Globe, Database } from "lucide-react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import {
   sendChatMessage,
   type ChatMessage,
@@ -30,12 +30,190 @@ function getStorageKey(projectId?: string) {
   return projectId ? `rag-conversations-${projectId}` : "rag-conversations";
 }
 
+// ---------------------------------------------------------------------------
+// Inline citation rendering
+// ---------------------------------------------------------------------------
+
+/** Parse text nodes for [N] citation markers and inject clickable links. */
+function CitationText({
+  text,
+  sources,
+}: {
+  text: string;
+  sources?: ChatSource[];
+}) {
+  if (!sources || sources.length === 0) return <>{text}</>;
+
+  // Deduplicate sources by citation to build the index
+  const uniqueSources: ChatSource[] = [];
+  const seen = new Set<string>();
+  for (const s of sources) {
+    if (!seen.has(s.citation)) {
+      seen.add(s.citation);
+      uniqueSources.push(s);
+    }
+  }
+
+  // Split on [N] patterns like [1], [2], [1, 2], etc.
+  const parts = text.split(/(\[\d+(?:,\s*\d+)*\])/g);
+  if (parts.length === 1) return <>{text}</>;
+
+  return (
+    <>
+      {parts.map((part, i) => {
+        const match = part.match(/^\[(\d+(?:,\s*\d+)*)\]$/);
+        if (!match) return <span key={i}>{part}</span>;
+
+        const nums = match[1].split(",").map((n) => parseInt(n.trim(), 10));
+        return (
+          <span key={i}>
+            {nums.map((num, j) => {
+              const srcIndex = num - 1; // citations are 1-indexed
+              const src = uniqueSources[srcIndex];
+              if (!src) {
+                return (
+                  <sup key={j} className="text-[10px] text-muted-foreground ml-0.5">
+                    [{num}]
+                  </sup>
+                );
+              }
+              const isWeb = src.source === "perplexity";
+              return (
+                <a
+                  key={j}
+                  href={src.source_url || "#"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={src.citation + (isWeb ? " (Web)" : " (KB)")}
+                  className={`inline-flex items-center justify-center ml-0.5 no-underline rounded-full text-[10px] font-semibold h-4 min-w-4 px-1 align-super transition-colors ${
+                    isWeb
+                      ? "bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-300"
+                      : "bg-primary/10 text-primary hover:bg-primary/20"
+                  }`}
+                >
+                  {num}
+                </a>
+              );
+            })}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+/** Build custom ReactMarkdown components that inject citation links. */
+function useCitationComponents(sources?: ChatSource[]): Components {
+  return {
+    p: ({ children }) => (
+      <p>
+        {processChildren(children, sources)}
+      </p>
+    ),
+    li: ({ children }) => (
+      <li>
+        {processChildren(children, sources)}
+      </li>
+    ),
+    td: ({ children }) => (
+      <td>
+        {processChildren(children, sources)}
+      </td>
+    ),
+  };
+}
+
+/** Recursively process children to replace text nodes containing [N] markers. */
+function processChildren(
+  children: React.ReactNode,
+  sources?: ChatSource[],
+): React.ReactNode {
+  if (!sources || sources.length === 0) return children;
+
+  return Array.isArray(children)
+    ? children.map((child, i) => processChild(child, sources, i))
+    : processChild(children, sources, 0);
+}
+
+function processChild(
+  child: React.ReactNode,
+  sources: ChatSource[],
+  key: number,
+): React.ReactNode {
+  if (typeof child === "string") {
+    return <CitationText key={key} text={child} sources={sources} />;
+  }
+  return child;
+}
+
 const SUGGESTED_QUESTIONS = [
   "What is the M&E exemption under RCW 82.08.02565?",
   "How does the multi-point use exemption work for software licenses?",
   "Is SaaS subject to retail sales tax in Washington?",
   "When can a buyer claim a refund for over-collected sales tax?",
 ];
+
+function AssistantMessage({ content, sources }: { content: string; sources?: ChatSource[] }) {
+  const components = useCitationComponents(sources);
+  return (
+    <div className="text-sm prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1">
+      <ReactMarkdown components={components}>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
+function SourcesList({ sources }: { sources: ChatSource[] }) {
+  const unique = sources.filter(
+    (s, idx, arr) => arr.findIndex((x) => x.citation === s.citation) === idx,
+  );
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-3 pt-2 border-t border-border/50">
+      <span className="text-xs text-muted-foreground mr-1 flex items-center gap-1">
+        Sources:
+      </span>
+      {unique.slice(0, 8).map((s, j) => {
+        const isWeb = s.source === "perplexity";
+        const icon = isWeb ? (
+          <Globe className="h-3 w-3 mr-1 shrink-0" />
+        ) : (
+          <Database className="h-3 w-3 mr-1 shrink-0" />
+        );
+        const badge = (
+          <Badge
+            variant="outline"
+            className={`text-xs flex items-center ${
+              isWeb
+                ? "border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                : "hover:bg-primary/10"
+            } ${s.source_url ? "cursor-pointer" : ""}`}
+          >
+            {icon}
+            <span className="inline-flex items-center justify-center rounded-full bg-muted text-[10px] font-bold h-4 min-w-4 px-1 mr-1">
+              {j + 1}
+            </span>
+            {s.citation}
+            {typeof s.similarity === "number" && s.similarity > 0
+              ? ` (${(s.similarity * 100).toFixed(0)}%)`
+              : ""}
+          </Badge>
+        );
+        return s.source_url ? (
+          <a
+            key={j}
+            href={s.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex no-underline"
+          >
+            {badge}
+          </a>
+        ) : (
+          <span key={j} className="inline-flex">{badge}</span>
+        );
+      })}
+    </div>
+  );
+}
 
 function loadConversations(projectId?: string): Conversation[] {
   if (typeof window === "undefined") return [];
@@ -299,49 +477,12 @@ export default function ChatPage() {
                 {msg.role === "user" ? (
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                 ) : (
-                  <div className="text-sm prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  </div>
+                  <AssistantMessage content={msg.content} sources={msg.sources} />
                 )}
                 {msg.role === "assistant" &&
                   msg.sources &&
                   msg.sources.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-3 pt-2 border-t border-border/50">
-                      <span className="text-xs text-muted-foreground mr-1">
-                        Sources:
-                      </span>
-                      {msg.sources
-                        .filter(
-                          (s, idx, arr) =>
-                            arr.findIndex((x) => x.citation === s.citation) === idx,
-                        )
-                        .slice(0, 6)
-                        .map((s, j) =>
-                          s.source_url ? (
-                            <a
-                              key={j}
-                              href={s.source_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex"
-                            >
-                              <Badge variant="outline" className="text-xs hover:bg-primary/10 cursor-pointer">
-                                {s.citation}
-                                {typeof s.similarity === "number" && s.similarity > 0
-                                  ? ` (${(s.similarity * 100).toFixed(0)}%)`
-                                  : ""}
-                              </Badge>
-                            </a>
-                          ) : (
-                            <Badge key={j} variant="outline" className="text-xs">
-                              {s.citation}
-                              {typeof s.similarity === "number" && s.similarity > 0
-                                ? ` (${(s.similarity * 100).toFixed(0)}%)`
-                                : ""}
-                            </Badge>
-                          ),
-                        )}
-                    </div>
+                    <SourcesList sources={msg.sources} />
                   )}
               </div>
             </div>

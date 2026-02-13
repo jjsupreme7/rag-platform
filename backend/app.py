@@ -18,7 +18,7 @@ from db import get_supabase
 from retrieval import retrieve
 from ingest import ingest_pdf
 from scraper import scrape_website, discover_and_filter
-from monitor import run_monitor_check, get_monitor_queries
+from monitor import run_monitor_check, get_monitor_queries, perplexity_chat_search
 
 _openai: OpenAI | None = None
 
@@ -260,15 +260,16 @@ class ChatRequest(BaseModel):
     project_id: str | None = None
 
 
-DEFAULT_SYSTEM_PROMPT = """You are an expert Washington State tax law assistant with access to a knowledge base of legal documents, WAC/RCW codes, Excise Tax Advisories, and WA Department of Revenue guidance.
+DEFAULT_SYSTEM_PROMPT = """You are an expert Washington State tax law assistant with access to a knowledge base of legal documents, WAC/RCW codes, Excise Tax Advisories, and WA Department of Revenue guidance. You also have access to live web search results from dor.wa.gov.
 
 CITATION RULES (MANDATORY):
-1. Cite every factual claim using [Source N] where N matches the source numbers provided in the context.
-2. Place citations immediately after the statement they support, e.g. "Manufacturing equipment is exempt under the M&E exemption [Source 2]."
-3. When referencing a specific law, include the code inline, e.g. "as specified in RCW 82.08.02565 [Source 3]."
-4. When a statement draws from multiple sources, cite all of them: [Source 1][Source 3].
+1. Cite every factual claim using [N] where N matches the source numbers provided in the context.
+2. Place citations immediately after the statement they support, e.g. "Manufacturing equipment is exempt under the M&E exemption [2]."
+3. When referencing a specific law, include the code inline, e.g. "as specified in RCW 82.08.02565 [3]."
+4. When a statement draws from multiple sources, cite all of them: [1][3].
 5. Never make tax law claims without a source citation.
 6. If the provided sources are insufficient to answer, state this clearly.
+7. Sources may come from the local knowledge base or live web search — treat both equally.
 
 Be concise, accurate, and always ground your answers in the provided sources."""
 
@@ -283,10 +284,12 @@ def _build_rag_prompt(chunks: list[dict]) -> str:
         source_url = chunk.get("source_url", "")
         text = chunk.get("chunk_text", "")[:1500]
         similarity = chunk.get("similarity", 0)
-        header = f"[Source {i}] ({citation}"
+        source_type = chunk.get("source", "local")
+        tag = "Web" if source_type == "perplexity" else "KB"
+        header = f"[{i}] [{tag}] ({citation}"
         if source_url:
             header += f" | {source_url}"
-        if isinstance(similarity, (int, float)):
+        if isinstance(similarity, (int, float)) and similarity > 0:
             header += f", relevance: {similarity:.0%}"
         header += ")"
         parts.append(f"{header}\n{text}")
@@ -315,6 +318,14 @@ def chat(request: Request, req: ChatRequest):
 
     # 1. Retrieve relevant chunks via hybrid search + reranking
     chunks = retrieve(req.message, req.top_k, project_id=req.project_id)
+
+    # 1b. Augment with Perplexity live web search (parallel source)
+    try:
+        pplx_chunks = perplexity_chat_search(req.message)
+        if pplx_chunks:
+            chunks = chunks + pplx_chunks
+    except Exception:
+        pass  # Perplexity failure should never break chat
 
     # 2. Build context
     context = _build_rag_prompt(chunks)
@@ -349,6 +360,7 @@ def chat(request: Request, req: ChatRequest):
             "citation": c.get("citation", ""),
             "similarity": c.get("similarity", 0),
             "source_url": c.get("source_url"),
+            "source": c.get("source", "local"),
         }
         for c in chunks
     ]
