@@ -108,6 +108,16 @@ export default function SearchPage() {
                 <p className="text-sm whitespace-pre-wrap line-clamp-6 text-muted-foreground">
                   {result.chunk_text}
                 </p>
+                {result.source_url && (
+                  <a
+                    href={result.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline mt-2 block truncate"
+                  >
+                    {result.source_url}
+                  </a>
+                )}
                 {result.tax_types && result.tax_types.length > 0 && (
                   <div className="flex gap-1 mt-3">
                     {result.tax_types.map((t) => (

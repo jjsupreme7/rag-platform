@@ -148,6 +148,7 @@ def ingest_pdf(
     doc_row = {
         "title": title,
         "document_type": "tax_law",
+        "source_type": "upload",
         "source_file": filename,
         "citation": citation or title,
         "law_category": category,

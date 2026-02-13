@@ -32,6 +32,7 @@ export default function DocumentsPage() {
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState<Record<string, number>>({});
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedSourceType, setSelectedSourceType] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [chunksLoading, setChunksLoading] = useState(false);
@@ -40,6 +41,7 @@ export default function DocumentsPage() {
   useEffect(() => {
     setPage(0);
     setSelectedCategory(null);
+    setSelectedSourceType(null);
   }, [activeProject?.id]);
 
   // Load categories
@@ -47,17 +49,17 @@ export default function DocumentsPage() {
     fetchCategories(activeProject?.id).then(setCategories).catch(console.error);
   }, [activeProject?.id]);
 
-  // Load documents when page or category changes
+  // Load documents when page, category, or source type changes
   useEffect(() => {
     setLoading(true);
-    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE, selectedCategory || undefined, activeProject?.id)
+    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE, selectedCategory || undefined, activeProject?.id, selectedSourceType || undefined)
       .then((r) => {
         setDocuments(r.documents);
         setTotal(r.total);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [page, selectedCategory, activeProject?.id]);
+  }, [page, selectedCategory, selectedSourceType, activeProject?.id]);
 
   function handleRowClick(doc: Document) {
     setSelectedDoc(doc);
@@ -85,6 +87,30 @@ export default function DocumentsPage() {
             {selectedCategory ? ` in ${selectedCategory}` : " in knowledge base"}
           </p>
         </div>
+      </div>
+
+      {/* Source type filter */}
+      <div className="flex gap-2 mb-3">
+        {[
+          { key: null, label: "All Sources" },
+          { key: "upload", label: "Uploaded" },
+          { key: "web_scrape", label: "Web Scraped" },
+        ].map(({ key, label }) => (
+          <button
+            key={label}
+            onClick={() => {
+              setSelectedSourceType(key);
+              setPage(0);
+            }}
+            className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+              selectedSourceType === key
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background border-border hover:bg-accent"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Category filter tabs */}
@@ -131,7 +157,7 @@ export default function DocumentsPage() {
                   <TableHead>Title</TableHead>
                   <TableHead>Citation</TableHead>
                   <TableHead>Category</TableHead>
-                  <TableHead>Type</TableHead>
+                  <TableHead>Source</TableHead>
                   <TableHead className="text-right">Chunks</TableHead>
                 </TableRow>
               </TableHeader>
@@ -154,7 +180,12 @@ export default function DocumentsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{doc.document_type}</Badge>
+                      <Badge
+                        variant={doc.source_type === "web_scrape" ? "default" : "outline"}
+                        className={doc.source_type === "web_scrape" ? "bg-emerald-600" : ""}
+                      >
+                        {doc.source_type === "web_scrape" ? "Web" : "Upload"}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       {doc.total_chunks}
@@ -199,15 +230,32 @@ export default function DocumentsPage() {
                   {selectedDoc.title || selectedDoc.source_file}
                 </SheetTitle>
                 <SheetDescription asChild>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <code className="text-xs">{selectedDoc.citation}</code>
-                    {selectedDoc.law_category && (
-                      <Badge variant="secondary">{selectedDoc.law_category}</Badge>
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="text-xs">{selectedDoc.citation}</code>
+                      {selectedDoc.law_category && (
+                        <Badge variant="secondary">{selectedDoc.law_category}</Badge>
+                      )}
+                      <Badge
+                        variant={selectedDoc.source_type === "web_scrape" ? "default" : "outline"}
+                        className={selectedDoc.source_type === "web_scrape" ? "bg-emerald-600" : ""}
+                      >
+                        {selectedDoc.source_type === "web_scrape" ? "Web Scraped" : "Uploaded"}
+                      </Badge>
+                      <span className="text-xs">
+                        {selectedDoc.total_chunks} chunk{selectedDoc.total_chunks !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {selectedDoc.source_url && (
+                      <a
+                        href={selectedDoc.source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-primary hover:underline block truncate"
+                      >
+                        {selectedDoc.source_url}
+                      </a>
                     )}
-                    <Badge variant="outline">{selectedDoc.document_type}</Badge>
-                    <span className="text-xs">
-                      {selectedDoc.total_chunks} chunk{selectedDoc.total_chunks !== 1 ? "s" : ""}
-                    </span>
                   </div>
                 </SheetDescription>
               </SheetHeader>

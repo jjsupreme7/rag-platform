@@ -315,12 +315,32 @@ export default function ChatPage() {
                           (s, idx, arr) =>
                             arr.findIndex((x) => x.citation === s.citation) === idx,
                         )
-                        .slice(0, 5)
-                        .map((s, j) => (
-                          <Badge key={j} variant="outline" className="text-xs">
-                            {s.citation} ({(s.similarity * 100).toFixed(0)}%)
-                          </Badge>
-                        ))}
+                        .slice(0, 6)
+                        .map((s, j) =>
+                          s.source_url ? (
+                            <a
+                              key={j}
+                              href={s.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex"
+                            >
+                              <Badge variant="outline" className="text-xs hover:bg-primary/10 cursor-pointer">
+                                {s.citation}
+                                {typeof s.similarity === "number" && s.similarity > 0
+                                  ? ` (${(s.similarity * 100).toFixed(0)}%)`
+                                  : ""}
+                              </Badge>
+                            </a>
+                          ) : (
+                            <Badge key={j} variant="outline" className="text-xs">
+                              {s.citation}
+                              {typeof s.similarity === "number" && s.similarity > 0
+                                ? ` (${(s.similarity * 100).toFixed(0)}%)`
+                                : ""}
+                            </Badge>
+                          ),
+                        )}
                     </div>
                   )}
               </div>
