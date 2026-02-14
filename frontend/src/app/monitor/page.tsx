@@ -117,9 +117,12 @@ function categoryColor(category: string): string {
   if (category.includes("RCW")) return "bg-rose-500";
   if (category.includes("WAC")) return "bg-violet-500";
   if (category.includes("ETA")) return "bg-amber-500";
-  if (category.includes("WTD")) return "bg-blue-500";
-  if (category.includes("Publication")) return "bg-emerald-500";
+  if (category.includes("WTD") || category.includes("Determination")) return "bg-blue-500";
+  if (category.includes("Interim")) return "bg-yellow-500";
+  if (category.includes("Special Notice")) return "bg-teal-500";
+  if (category.includes("Tax Topic")) return "bg-lime-500";
   if (category.includes("Industry")) return "bg-cyan-500";
+  if (category.includes("Publication")) return "bg-emerald-500";
   if (category.includes("Rate")) return "bg-orange-500";
   if (category.includes("Legislative")) return "bg-pink-500";
   if (category.includes("Taxpedia")) return "bg-indigo-500";

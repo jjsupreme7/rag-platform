@@ -30,6 +30,12 @@ DOMAIN_INCLUDE_PATTERNS = {
         "/taxes-rates/",
         "/education/",
         "/forms-publications/",
+        "/interim-guidance",
+        "/interim_guidance",
+        "/special-notice",
+        "/tax-topics",
+        "/industry-guides/",
+        "/washington-tax-decisions",
         ".pdf",
     ],
     "app.leg.wa.gov": [
@@ -189,12 +195,20 @@ def categorize_url(url: str) -> str:
     if re.search(r"eta.*\.pdf", full) or re.search(r"\d{4}\.pdf", full):
         if "taxpedia" in full or "eta" in full:
             return "Excise Tax Advisory (ETA)"
-    if "wtd" in path or "tax-decision" in path:
+    if "wtd" in path or "tax-decision" in path or "washington-tax-decisions" in path:
         return "Tax Determination (WTD)"
+    if "interim-guidance" in path or "interim_guidance" in path:
+        return "Interim Guidance Statement"
+    if "special-notice" in path:
+        return "Special Notice"
+    if "tax-topics" in path:
+        return "Tax Topic"
+    if "/industry-guides/" in path or "/apportionment" in path:
+        return "Industry Guide"
+    if "/education/" in path:
+        return "Industry Guide"
     if "/forms-publications/" in path or "/publications" in path:
         return "Tax Publication"
-    if "/industry-guides/" in path or "/education/" in path:
-        return "Industry Guide"
     if "/taxes-rates/" in path:
         return "Tax Rate Info"
     if "/laws-rules/" in path:

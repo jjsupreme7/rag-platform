@@ -19,57 +19,99 @@ PERPLEXITY_BASE_URL = "https://api.perplexity.ai"
 # All authoritative WA tax domains
 WA_TAX_DOMAINS = ["dor.wa.gov", "app.leg.wa.gov", "taxpedia.dor.wa.gov"]
 
-# Predefined search queries covering major WA tax content areas
+# Predefined search queries covering ALL WA tax content areas from research doc
 MONITOR_QUERIES = [
+    # --- Statutes (RCW) - Most authoritative ---
     {
-        "id": "rcw_statutes",
-        "label": "RCW Tax Statutes",
-        "query": "What are the current RCW Title 82 tax statutes on app.leg.wa.gov? Include chapters 82.04, 82.08, 82.12, and 82.29A.",
+        "id": "rcw_82_04",
+        "label": "RCW 82.04 B&O Tax",
+        "query": "List all sections of RCW 82.04 (Business & Occupation tax) on app.leg.wa.gov.",
     },
     {
-        "id": "wac_rules",
-        "label": "WAC 458-20 Tax Rules",
-        "query": "What are the current WAC 458-20 excise tax rules on app.leg.wa.gov and dor.wa.gov? List all sections.",
+        "id": "rcw_82_08",
+        "label": "RCW 82.08 Retail Sales Tax",
+        "query": "List all sections of RCW 82.08 (Retail Sales Tax) on app.leg.wa.gov.",
     },
     {
-        "id": "wac_other",
-        "label": "WAC Other (458-61A, etc.)",
-        "query": "What WAC 458-61A real estate excise tax and other WAC 458 rules are on app.leg.wa.gov?",
+        "id": "rcw_82_12",
+        "label": "RCW 82.12 Use Tax",
+        "query": "List all sections of RCW 82.12 (Use Tax) on app.leg.wa.gov.",
     },
     {
-        "id": "excise_tax_advisories",
-        "label": "Excise Tax Advisories",
-        "query": "What excise tax advisories (ETAs) are available on dor.wa.gov and taxpedia.dor.wa.gov?",
+        "id": "rcw_82_other",
+        "label": "RCW 82 Other Chapters",
+        "query": "List all RCW Title 82 chapters on app.leg.wa.gov beyond 82.04, 82.08, 82.12, including 82.29A leasehold excise tax and 82.14 local taxes.",
     },
+    # --- Regulations (WAC) ---
+    {
+        "id": "wac_458_20",
+        "label": "WAC 458-20 Excise Tax Rules",
+        "query": "List all WAC 458-20 excise tax rule sections on app.leg.wa.gov. These are the most used tax regulations.",
+    },
+    {
+        "id": "wac_458_other",
+        "label": "WAC 458 Other (61A, etc.)",
+        "query": "What other WAC 458 rules exist on app.leg.wa.gov beyond 458-20? Include WAC 458-61A real estate excise tax and any others.",
+    },
+    # --- Determinations (WTD) ---
     {
         "id": "tax_determinations",
         "label": "Tax Determinations (WTD)",
-        "query": "What Washington tax determinations (WTDs) are published on dor.wa.gov and taxpedia.dor.wa.gov?",
+        "query": "What Washington tax determinations (WTDs) are published on dor.wa.gov/washington-tax-decisions and taxpedia.dor.wa.gov? List recent determinations.",
     },
+    # --- Excise Tax Advisories (ETA) ---
+    {
+        "id": "excise_tax_advisories",
+        "label": "Excise Tax Advisories (ETA)",
+        "query": "What excise tax advisories (ETAs) are available on dor.wa.gov/laws-rules/excise-tax-advisories-eta and taxpedia.dor.wa.gov?",
+    },
+    # --- Interim Guidance Statements ---
+    {
+        "id": "interim_guidance",
+        "label": "Interim Guidance Statements",
+        "query": "What interim guidance statements are published on dor.wa.gov/laws-rules/interim_guidance_statements? List all current interim guidance.",
+    },
+    # --- Special Notices ---
+    {
+        "id": "special_notices",
+        "label": "Special Notices",
+        "query": "What special notices are published on dor.wa.gov/forms-publications/publications-subject/special-notices? List all current special notices.",
+    },
+    # --- Industry Guides ---
+    {
+        "id": "industry_guides",
+        "label": "Industry Tax Guides",
+        "query": "What industry-specific tax guides are on dor.wa.gov/education/industry-guides? Include the apportionment guide and all industry guides.",
+    },
+    # --- Tax Topics ---
+    {
+        "id": "tax_topics",
+        "label": "Tax Topics",
+        "query": "What tax topics are published on dor.wa.gov/forms-publications/publications-subject/tax-topics? Include digital products, nexus, and all topic pages.",
+    },
+    # --- Forms & Publications ---
+    {
+        "id": "publications",
+        "label": "Forms & Publications",
+        "query": "What tax publications, forms, and PDF guides are available on dor.wa.gov/forms-publications?",
+    },
+    # --- Tax Rates ---
     {
         "id": "tax_rates",
         "label": "Tax Rates & Changes",
         "query": "What are the current tax rate pages and rate change updates on dor.wa.gov?",
     },
+    # --- Laws & Rules landing ---
     {
-        "id": "publications",
-        "label": "Forms & Publications",
-        "query": "What tax publications and guides are available as PDFs on dor.wa.gov?",
+        "id": "laws_rules",
+        "label": "Laws & Rules Overview",
+        "query": "What content is available on dor.wa.gov/laws-rules? List all subpages including the tax research index.",
     },
-    {
-        "id": "industry_guides",
-        "label": "Industry Guides",
-        "query": "What industry-specific tax guides are on dor.wa.gov? List all education and industry guide pages.",
-    },
-    {
-        "id": "bno_sales_tax",
-        "label": "B&O and Sales Tax",
-        "query": "What B&O tax and sales tax exemption guidance exists on dor.wa.gov, including RCW citations from app.leg.wa.gov?",
-    },
+    # --- Recent Updates (catch-all) ---
     {
         "id": "recent_updates",
         "label": "Recent Updates (All Sources)",
-        "query": "What new tax guidance, rules, statutes, or publications has Washington State recently published on dor.wa.gov or app.leg.wa.gov?",
+        "query": "What new tax guidance, rules, statutes, determinations, or publications has Washington State recently published on dor.wa.gov, app.leg.wa.gov, or taxpedia.dor.wa.gov?",
     },
 ]
 

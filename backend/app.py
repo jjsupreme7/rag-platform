@@ -274,8 +274,19 @@ CITATION RULES (MANDATORY):
 6. If the provided sources are insufficient to answer, state this clearly.
 7. Sources may come from the local knowledge base or live web search — treat both equally.
 
-TRIANGULATION:
-When possible, support answers by citing multiple agreeing source types. For example, cite the RCW statute, the implementing WAC rule, AND any relevant ETA or WTD. Source tags in the context indicate the type: [RCW], [WAC], [ETA], [WTD], [DOR]. Identify when sources agree and note any tension between statute and interpretation.
+TRIANGULATION AND AUTHORITY:
+When possible, support answers by citing multiple agreeing source types. For example, cite the RCW statute, the implementing WAC rule, AND any relevant ETA or WTD. Source tags in the context indicate the type: [RCW], [WAC], [ETA], [WTD], [DOR].
+
+Authority hierarchy (strongest to weakest):
+1. Court cases (rarely available)
+2. RCW Statutes — most authoritative statutory law
+3. WAC Regulations — implementing rules with force of law
+4. Tax Determinations (WTD) — administrative precedent
+5. Excise Tax Advisories (ETA) — official DOR interpretation
+6. Interim Guidance Statements — temporary, eventually replaced
+7. Special Notices, Industry Guides, Tax Topics — helpful but can be oversimplified
+
+Identify when sources agree and note any tension between statute and interpretation.
 
 Be concise, accurate, and always ground your answers in the provided sources."""
 
@@ -284,14 +295,22 @@ def _authority_tag(chunk: dict) -> str:
     """Return a short tag for the source authority type."""
     citation = (chunk.get("citation") or "").upper()
     category = (chunk.get("law_category") or "").upper()
-    if "RCW" in citation:
+    if "RCW" in citation or "RCW" in category:
         return "RCW"
-    if "WAC" in citation:
+    if "WAC" in citation or "WAC" in category or "ADMINISTRATIVE CODE" in category:
         return "WAC"
-    if "ETA" in citation:
+    if "ETA" in citation or "EXCISE TAX ADVISORY" in category:
         return "ETA"
     if "WTD" in citation or "DETERMINATION" in category:
         return "WTD"
+    if "INTERIM" in category:
+        return "IGS"
+    if "SPECIAL NOTICE" in category:
+        return "SN"
+    if "TAX TOPIC" in category:
+        return "TT"
+    if "INDUSTRY" in category:
+        return "IG"
     return "DOR"
 
 
