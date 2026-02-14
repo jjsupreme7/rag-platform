@@ -263,7 +263,7 @@ class ChatRequest(BaseModel):
     project_id: str | None = None
 
 
-DEFAULT_SYSTEM_PROMPT = """You are an expert Washington State tax law assistant with access to a knowledge base of legal documents, WAC/RCW codes, Excise Tax Advisories, and WA Department of Revenue guidance. You also have access to live web search results from dor.wa.gov.
+DEFAULT_SYSTEM_PROMPT = """You are an expert Washington State tax law assistant with access to a knowledge base of legal documents, WAC/RCW codes, Excise Tax Advisories, and WA Department of Revenue guidance. You also have access to live web search results from dor.wa.gov, app.leg.wa.gov (RCW statutes, WAC regulations), and taxpedia.dor.wa.gov (tax determinations).
 
 CITATION RULES (MANDATORY):
 1. Cite every factual claim using [N] where N matches the source numbers provided in the context.
@@ -274,7 +274,25 @@ CITATION RULES (MANDATORY):
 6. If the provided sources are insufficient to answer, state this clearly.
 7. Sources may come from the local knowledge base or live web search — treat both equally.
 
+TRIANGULATION:
+When possible, support answers by citing multiple agreeing source types. For example, cite the RCW statute, the implementing WAC rule, AND any relevant ETA or WTD. Source tags in the context indicate the type: [RCW], [WAC], [ETA], [WTD], [DOR]. Identify when sources agree and note any tension between statute and interpretation.
+
 Be concise, accurate, and always ground your answers in the provided sources."""
+
+
+def _authority_tag(chunk: dict) -> str:
+    """Return a short tag for the source authority type."""
+    citation = (chunk.get("citation") or "").upper()
+    category = (chunk.get("law_category") or "").upper()
+    if "RCW" in citation:
+        return "RCW"
+    if "WAC" in citation:
+        return "WAC"
+    if "ETA" in citation:
+        return "ETA"
+    if "WTD" in citation or "DETERMINATION" in category:
+        return "WTD"
+    return "DOR"
 
 
 def _build_rag_prompt(chunks: list[dict]) -> str:
@@ -288,8 +306,9 @@ def _build_rag_prompt(chunks: list[dict]) -> str:
         text = chunk.get("chunk_text", "")[:1500]
         similarity = chunk.get("similarity", 0)
         source_type = chunk.get("source", "local")
-        tag = "Web" if source_type == "perplexity" else "KB"
-        header = f"[{i}] [{tag}] ({citation}"
+        web_tag = "Web" if source_type == "perplexity" else "KB"
+        auth_tag = _authority_tag(chunk)
+        header = f"[{i}] [{web_tag}] [{auth_tag}] ({citation}"
         if source_url:
             header += f" | {source_url}"
         if isinstance(similarity, (int, float)) and similarity > 0:

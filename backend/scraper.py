@@ -23,14 +23,32 @@ USER_AGENT = "RAG-Platform-Scraper/1.0 (+https://github.com/rag-platform)"
 # Sitemap XML namespace
 SITEMAP_NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
-# Default URL patterns for dor.wa.gov tax content
-DEFAULT_INCLUDE_PATTERNS = [
-    "/laws-rules/",
-    "/taxes-rates/",
-    "/education/",
-    "/forms-publications/",
-    ".pdf",
-]
+# Domain-specific include patterns for URL filtering
+DOMAIN_INCLUDE_PATTERNS = {
+    "dor.wa.gov": [
+        "/laws-rules/",
+        "/taxes-rates/",
+        "/education/",
+        "/forms-publications/",
+        ".pdf",
+    ],
+    "app.leg.wa.gov": [
+        "/rcw/",
+        "/wac/",
+        "/RCW/",
+        "/WAC/",
+    ],
+    "taxpedia.dor.wa.gov": [
+        "/wtd/",
+        "/eta/",
+        "/WTD/",
+        "/ETA/",
+        ".pdf",
+    ],
+}
+
+# Default patterns (dor.wa.gov, backward compatible)
+DEFAULT_INCLUDE_PATTERNS = DOMAIN_INCLUDE_PATTERNS["dor.wa.gov"]
 
 DEFAULT_EXCLUDE_PATTERNS = [
     "/admin/",
@@ -141,10 +159,29 @@ def filter_urls(
 
 
 def categorize_url(url: str) -> str:
-    """Map a URL to a law_category based on its path pattern."""
-    path = urlparse(url).path.lower()
+    """Map a URL to a law_category based on its domain and path pattern."""
+    parsed = urlparse(url)
+    netloc = parsed.netloc.lower()
+    path = parsed.path.lower()
     full = url.lower()
 
+    # Legislature domain (app.leg.wa.gov) — RCW statutes and WAC rules
+    if "app.leg.wa.gov" in netloc:
+        if "/rcw/" in path:
+            return "RCW Statute"
+        if "/wac/" in path:
+            return "WAC Rule"
+        return "Legislative Source"
+
+    # Taxpedia domain (taxpedia.dor.wa.gov) — WTDs and ETAs
+    if "taxpedia.dor.wa.gov" in netloc:
+        if "wtd" in path or "tax-decision" in path or "determination" in path:
+            return "Tax Determination (WTD)"
+        if "eta" in path or "excise-tax-advisor" in path:
+            return "Excise Tax Advisory (ETA)"
+        return "DOR Taxpedia"
+
+    # DOR domain (dor.wa.gov) — existing patterns
     if "/tax-research-index/wac-" in path or "/wac-" in path:
         return "WAC Rule"
     if "excise-tax-advisor" in path or "/eta" in path:
@@ -152,7 +189,7 @@ def categorize_url(url: str) -> str:
     if re.search(r"eta.*\.pdf", full) or re.search(r"\d{4}\.pdf", full):
         if "taxpedia" in full or "eta" in full:
             return "Excise Tax Advisory (ETA)"
-    if "wtd" in path.lower() or "tax-decision" in path:
+    if "wtd" in path or "tax-decision" in path:
         return "Tax Determination (WTD)"
     if "/forms-publications/" in path or "/publications" in path:
         return "Tax Publication"
@@ -201,20 +238,28 @@ def _extract_html(url: str, html: str) -> dict:
     title = ""
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
-        # Remove common suffix like " | Washington Department of Revenue"
-        title = re.sub(r"\s*\|.*$", "", title).strip()
+        # Remove common suffixes
+        title = re.sub(r"\s*[\|—]\s*(Washington Department of Revenue|Washington State Legislature).*$", "", title).strip()
 
     # Remove non-content elements
     for tag in soup.find_all(["nav", "header", "footer", "script", "style", "noscript", "aside"]):
         tag.decompose()
 
-    # Try to find main content area (Drupal typical structure)
+    # Try to find main content area
     main = (
         soup.find("main")
         or soup.find("article")
         or soup.find("div", {"role": "main"})
         or soup.find("div", class_=re.compile(r"content|main|body", re.I))
     )
+
+    # Fallback for legislature ASP.NET pages (app.leg.wa.gov)
+    if not main and "leg.wa.gov" in url:
+        main = (
+            soup.find("div", id="contentWrapper")
+            or soup.find("div", class_="legContent")
+            or soup.find("div", id=re.compile(r"ContentPlaceHolder", re.I))
+        )
 
     if main:
         text = main.get_text(separator="\n", strip=True)
@@ -489,10 +534,21 @@ def _get_existing_source_urls(sb, project_id: str | None) -> set[str]:
 
 def _build_citation(url: str, title: str, category: str) -> str:
     """Build a human-readable citation from URL and title."""
+    from urllib.parse import parse_qs
     parsed = urlparse(url)
     path = parsed.path
+    netloc = parsed.netloc.lower()
 
-    # WAC citations
+    # Legislature URLs use ?cite= or ?Cite= query parameter
+    qs = parse_qs(parsed.query)
+    cite_val = (qs.get("cite") or qs.get("Cite", [None]))[0]
+    if cite_val and "app.leg.wa.gov" in netloc:
+        if "/rcw/" in path.lower():
+            return f"RCW {cite_val}"
+        if "/wac/" in path.lower():
+            return f"WAC {cite_val}"
+
+    # WAC citations from DOR site
     wac_match = re.search(r"wac-(\d+)", path, re.I)
     if wac_match:
         return f"WAC 458-20-{wac_match.group(1)}"

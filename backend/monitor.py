@@ -1,4 +1,4 @@
-"""Website monitor: detect new/updated content on dor.wa.gov via Perplexity Sonar API."""
+"""Website monitor: detect new/updated content on WA tax authority sites via Perplexity Sonar API."""
 
 import logging
 import time
@@ -16,12 +16,25 @@ logger = logging.getLogger(__name__)
 
 PERPLEXITY_BASE_URL = "https://api.perplexity.ai"
 
-# Predefined search queries covering major DOR content areas
+# All authoritative WA tax domains
+WA_TAX_DOMAINS = ["dor.wa.gov", "app.leg.wa.gov", "taxpedia.dor.wa.gov"]
+
+# Predefined search queries covering major WA tax content areas
 MONITOR_QUERIES = [
     {
+        "id": "rcw_statutes",
+        "label": "RCW Tax Statutes",
+        "query": "What are the current RCW Title 82 tax statutes on app.leg.wa.gov? Include chapters 82.04, 82.08, 82.12, and 82.29A.",
+    },
+    {
         "id": "wac_rules",
-        "label": "WAC Tax Rules",
-        "query": "What are the current WAC 458 tax rules published on dor.wa.gov? List all pages.",
+        "label": "WAC 458-20 Tax Rules",
+        "query": "What are the current WAC 458-20 excise tax rules on app.leg.wa.gov and dor.wa.gov? List all sections.",
+    },
+    {
+        "id": "wac_other",
+        "label": "WAC Other (458-61A, etc.)",
+        "query": "What WAC 458-61A real estate excise tax and other WAC 458 rules are on app.leg.wa.gov?",
     },
     {
         "id": "excise_tax_advisories",
@@ -31,7 +44,7 @@ MONITOR_QUERIES = [
     {
         "id": "tax_determinations",
         "label": "Tax Determinations (WTD)",
-        "query": "What Washington tax determinations (WTDs) are published on dor.wa.gov?",
+        "query": "What Washington tax determinations (WTDs) are published on dor.wa.gov and taxpedia.dor.wa.gov?",
     },
     {
         "id": "tax_rates",
@@ -51,12 +64,12 @@ MONITOR_QUERIES = [
     {
         "id": "bno_sales_tax",
         "label": "B&O and Sales Tax",
-        "query": "What B&O tax and sales tax exemption guidance pages exist on dor.wa.gov?",
+        "query": "What B&O tax and sales tax exemption guidance exists on dor.wa.gov, including RCW citations from app.leg.wa.gov?",
     },
     {
         "id": "recent_updates",
-        "label": "Recent DOR Updates",
-        "query": "What new tax guidance, rules, or publications has Washington DOR recently published on dor.wa.gov?",
+        "label": "Recent Updates (All Sources)",
+        "query": "What new tax guidance, rules, statutes, or publications has Washington State recently published on dor.wa.gov or app.leg.wa.gov?",
     },
 ]
 
@@ -72,10 +85,9 @@ def get_monitor_queries() -> list[dict]:
 
 def perplexity_search(query: str, recency_filter: str = "month") -> list[dict]:
     """
-    Search dor.wa.gov via Perplexity sonar chat completions.
-    Uses the citations array to discover URLs. The /search endpoint
-    returns too few results, but sonar's citations reliably surface
-    real dor.wa.gov pages.
+    Search WA tax authority sites via Perplexity sonar chat completions.
+    Uses the citations array to discover URLs from dor.wa.gov,
+    app.leg.wa.gov (RCW/WAC), and taxpedia.dor.wa.gov (WTDs/ETAs).
     Returns list of {url, title, snippet}.
     """
     headers = {
@@ -88,14 +100,15 @@ def perplexity_search(query: str, recency_filter: str = "month") -> list[dict]:
             {
                 "role": "system",
                 "content": (
-                    "List all relevant URLs from dor.wa.gov for this query. "
-                    "Cite as many specific dor.wa.gov pages as possible."
+                    "List all relevant URLs from Washington State tax authority websites. "
+                    "Cite pages from dor.wa.gov, app.leg.wa.gov (RCW statutes, WAC rules), "
+                    "and taxpedia.dor.wa.gov (WTDs, ETAs)."
                 ),
             },
             {"role": "user", "content": query},
         ],
         "web_search_options": {
-            "search_domain_filter": ["dor.wa.gov"],
+            "search_domain_filter": WA_TAX_DOMAINS,
             "search_recency_filter": recency_filter,
         },
     }
@@ -116,22 +129,42 @@ def perplexity_search(query: str, recency_filter: str = "month") -> list[dict]:
     results = []
     seen = set()
     for citation_url in citations:
-        # Post-filter: only keep dor.wa.gov URLs
-        if "dor.wa.gov" not in urlparse(citation_url).netloc:
+        # Post-filter: only keep WA tax authority URLs
+        netloc = urlparse(citation_url).netloc
+        if not any(domain in netloc for domain in WA_TAX_DOMAINS):
             continue
         normalized = citation_url.rstrip("/")
         if normalized in seen:
             continue
         seen.add(normalized)
-        # Extract title from URL path
-        path = urlparse(citation_url).path
-        title = path.split("/")[-1].replace("-", " ").replace("_", " ").replace(".pdf", "").strip()
+        # Extract title from URL path or query params
+        parsed = urlparse(citation_url)
+        title = _title_from_url(parsed)
         results.append({
             "url": citation_url,
-            "title": title.title() if title else "",
+            "title": title,
             "snippet": content[:200] if content else "",
         })
     return results
+
+
+def _title_from_url(parsed) -> str:
+    """Extract a human-readable title from a parsed URL."""
+    from urllib.parse import parse_qs
+    # Legislature URLs use ?cite= query param
+    qs = parse_qs(parsed.query)
+    if "cite" in qs or "Cite" in qs:
+        cite_val = (qs.get("cite") or qs.get("Cite", [""]))[0]
+        path_lower = parsed.path.lower()
+        if "/rcw/" in path_lower:
+            return f"RCW {cite_val}"
+        if "/wac/" in path_lower:
+            return f"WAC {cite_val}"
+        return cite_val
+    # Standard path-based title
+    path = parsed.path
+    title = path.split("/")[-1].replace("-", " ").replace("_", " ").replace(".pdf", "").strip()
+    return title.title() if title else ""
 
 
 def generate_change_summary(new_urls: list[dict]) -> str | None:
@@ -153,16 +186,17 @@ def generate_change_summary(new_urls: list[dict]) -> str | None:
             {
                 "role": "user",
                 "content": (
-                    "Summarize what is new or updated on the Washington State "
-                    "Department of Revenue website based on these recently found pages. "
-                    "Focus on tax law changes, new guidance, and regulatory updates. "
+                    "Summarize what is new or updated on Washington State tax authority "
+                    "websites (dor.wa.gov, app.leg.wa.gov, taxpedia.dor.wa.gov) based on "
+                    "these recently found pages. Focus on statute changes, new WAC rules, "
+                    "tax determinations, guidance updates, and regulatory changes. "
                     "Be concise.\n\n"
                     f"Pages found:\n{url_list}"
                 ),
             }
         ],
         "web_search_options": {
-            "search_domain_filter": ["dor.wa.gov"],
+            "search_domain_filter": WA_TAX_DOMAINS,
         },
     }
 
@@ -183,7 +217,8 @@ def generate_change_summary(new_urls: list[dict]) -> str | None:
 
 def perplexity_chat_search(query: str) -> list[dict]:
     """
-    Search dor.wa.gov for a user's chat question via Perplexity sonar.
+    Search WA tax authority sites for a user's chat question via Perplexity sonar.
+    Covers dor.wa.gov, app.leg.wa.gov (RCW/WAC), and taxpedia.dor.wa.gov (WTDs).
     Returns list of {citation, chunk_text, source_url, similarity} in the same
     format as local RAG chunks so they can be merged directly.
     """
@@ -201,14 +236,15 @@ def perplexity_chat_search(query: str) -> list[dict]:
                 "role": "system",
                 "content": (
                     "You are a Washington State tax law research assistant. "
-                    "Answer the question using only official WA state sources. "
-                    "Cite specific dor.wa.gov pages."
+                    "Answer using official WA state sources including dor.wa.gov, "
+                    "app.leg.wa.gov (RCW statutes, WAC rules), and taxpedia.dor.wa.gov (WTDs). "
+                    "Cite specific pages and triangulate across source types when possible."
                 ),
             },
             {"role": "user", "content": query},
         ],
         "web_search_options": {
-            "search_domain_filter": ["dor.wa.gov"],
+            "search_domain_filter": WA_TAX_DOMAINS,
         },
     }
 
@@ -229,7 +265,8 @@ def perplexity_chat_search(query: str) -> list[dict]:
         results = []
         seen = set()
         for citation_url in citations:
-            if "dor.wa.gov" not in urlparse(citation_url).netloc:
+            netloc = urlparse(citation_url).netloc
+            if not any(domain in netloc for domain in WA_TAX_DOMAINS):
                 continue
             normalized = citation_url.rstrip("/")
             if normalized in seen:
@@ -237,13 +274,13 @@ def perplexity_chat_search(query: str) -> list[dict]:
             seen.add(normalized)
 
             # Build a citation label from the URL
-            path = urlparse(citation_url).path
-            label = path.split("/")[-1].replace("-", " ").replace("_", " ").replace(".pdf", "").strip()
+            parsed = urlparse(citation_url)
+            label = _title_from_url(parsed)
             if not label:
-                label = urlparse(citation_url).netloc
+                label = parsed.netloc
 
             results.append({
-                "citation": label.title() if len(label) < 80 else label[:80],
+                "citation": label if len(label) < 80 else label[:80],
                 "chunk_text": content[:1500],
                 "source_url": citation_url,
                 "similarity": 0.0,  # No similarity score from Perplexity

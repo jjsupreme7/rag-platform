@@ -114,12 +114,15 @@ function statusBadge(status: string) {
 }
 
 function categoryColor(category: string): string {
+  if (category.includes("RCW")) return "bg-rose-500";
   if (category.includes("WAC")) return "bg-violet-500";
   if (category.includes("ETA")) return "bg-amber-500";
   if (category.includes("WTD")) return "bg-blue-500";
   if (category.includes("Publication")) return "bg-emerald-500";
   if (category.includes("Industry")) return "bg-cyan-500";
   if (category.includes("Rate")) return "bg-orange-500";
+  if (category.includes("Legislative")) return "bg-pink-500";
+  if (category.includes("Taxpedia")) return "bg-indigo-500";
   return "bg-slate-500";
 }
 
@@ -212,8 +215,8 @@ export default function MonitorPage() {
         </div>
         <h2 className="text-2xl font-bold tracking-tight">Monitor</h2>
         <p className="text-muted-foreground mt-1">
-          Use Perplexity AI to detect new or updated content on dor.wa.gov and
-          automatically update your knowledge base.
+          Use Perplexity AI to detect new or updated content on dor.wa.gov,
+          app.leg.wa.gov (RCW/WAC), and taxpedia.dor.wa.gov, then update your knowledge base.
         </p>
       </div>
 
@@ -494,7 +497,7 @@ export default function MonitorPage() {
                 </div>
                 <p className="text-sm font-medium">Knowledge base is up to date</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  No new content was found on dor.wa.gov
+                  No new content was found across WA tax authority sites
                 </p>
               </div>
             )}
@@ -510,7 +513,7 @@ export default function MonitorPage() {
           </div>
           <p className="text-sm font-medium">No monitor activity yet</p>
           <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-            Click &quot;Run Check&quot; to scan dor.wa.gov for new content using
+            Click &quot;Run Check&quot; to scan WA tax authority sites for new content using
             Perplexity AI search.
           </p>
         </div>
