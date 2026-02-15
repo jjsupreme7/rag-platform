@@ -19,6 +19,9 @@ class Settings:
     RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "5"))
     SCRAPE_RATE_LIMIT: float = float(os.getenv("SCRAPE_RATE_LIMIT", "0.5"))
     SCRAPE_MAX_PAGES: int = int(os.getenv("SCRAPE_MAX_PAGES", "5000"))
+    RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+    NOTIFICATION_EMAIL: str = os.getenv("NOTIFICATION_EMAIL", "")
+    APP_URL: str = os.getenv("APP_URL", "http://localhost:3001")
     CORS_ORIGINS: list[str] = [
         o.strip()
         for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")

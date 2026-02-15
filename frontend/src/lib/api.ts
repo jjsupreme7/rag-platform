@@ -126,6 +126,34 @@ export async function fetchCategories(projectId?: string): Promise<Record<string
   return data.categories;
 }
 
+export async function fetchSourceTypes(projectId?: string): Promise<Record<string, number>> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  const res = await fetch(`${API_BASE}/api/documents/source-types?${params}`);
+  if (!res.ok) throw new Error("Failed to fetch source types");
+  const data = await res.json();
+  return data.source_types;
+}
+
+export interface RecentChat {
+  id: string;
+  question: string;
+  chat_model: string | null;
+  response_time_ms: number | null;
+  sources_count: number | null;
+  is_error: boolean;
+  created_at: string;
+}
+
+export async function fetchRecentChats(limit = 5, projectId?: string): Promise<RecentChat[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (projectId) params.set("project_id", projectId);
+  const res = await fetch(`${API_BASE}/api/chat/recent?${params}`);
+  if (!res.ok) throw new Error("Failed to fetch recent chats");
+  const data = await res.json();
+  return data.chats;
+}
+
 // ---------------------------------------------------------------------------
 // Document Detail (with chunks)
 // ---------------------------------------------------------------------------
@@ -426,4 +454,227 @@ export async function stopMonitor(jobId: string): Promise<void> {
     method: "POST",
   });
   if (!res.ok) throw new Error("Failed to stop monitor");
+}
+
+// ---------------------------------------------------------------------------
+// Page Monitor (DOR page-change detection)
+// ---------------------------------------------------------------------------
+
+export interface CrawlJob {
+  job_id: string;
+  status: string;
+  total_pages: number;
+  pages_crawled: number;
+  pages_new: number;
+  pages_modified: number;
+  pages_unchanged: number;
+  pages_error: number;
+  substantive_changes: number;
+  auto_ingested: number;
+  new_wtds_found: number;
+  new_wtds_ingested: number;
+  news_releases: number;
+  special_notices: number;
+  current_url: string;
+  elapsed_seconds: number;
+  changes: CrawlChange[];
+  errors: { url: string; error: string }[];
+  error?: string;
+}
+
+export interface CrawlChange {
+  url: string;
+  type: string;
+  title: string;
+  summary: string;
+  is_substantive?: boolean;
+}
+
+export interface MonitoredPage {
+  id: string;
+  url: string;
+  category: string | null;
+  title: string | null;
+  content_hash: string | null;
+  last_checked_at: string | null;
+  last_changed_at: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface ChangeLogEntry {
+  id: string;
+  page_state_id: string | null;
+  url: string;
+  change_type: string;
+  title: string | null;
+  summary: string | null;
+  is_substantive: boolean;
+  diff_additions: number;
+  diff_deletions: number;
+  auto_ingested: boolean;
+  review_status: string | null;
+  last_modified: string | null;
+  detected_at: string;
+}
+
+export async function startCrawl(
+  projectId?: string,
+  autoIngest: boolean = true
+): Promise<{ job_id: string }> {
+  const res = await fetch(`${API_BASE}/api/monitor/crawl`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId, auto_ingest: autoIngest }),
+  });
+  if (!res.ok) throw new Error("Failed to start crawl");
+  return res.json();
+}
+
+export async function getCrawlStatus(jobId: string): Promise<CrawlJob> {
+  const res = await fetch(`${API_BASE}/api/monitor/crawl/status/${jobId}`);
+  if (!res.ok) throw new Error("Failed to get crawl status");
+  return res.json();
+}
+
+export async function getCrawlJobs(): Promise<CrawlJob[]> {
+  const res = await fetch(`${API_BASE}/api/monitor/crawl/jobs`);
+  if (!res.ok) throw new Error("Failed to get crawl jobs");
+  return res.json();
+}
+
+export async function stopCrawl(jobId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/monitor/crawl/stop/${jobId}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to stop crawl");
+}
+
+export async function getMonitoredPages(
+  projectId?: string
+): Promise<{ pages: MonitoredPage[]; total: number }> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  const res = await fetch(`${API_BASE}/api/monitor/pages?${params}`);
+  if (!res.ok) throw new Error("Failed to get monitored pages");
+  return res.json();
+}
+
+export async function addMonitoredPage(
+  url: string,
+  projectId?: string,
+  category?: string
+): Promise<MonitoredPage> {
+  const res = await fetch(`${API_BASE}/api/monitor/pages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, project_id: projectId, category }),
+  });
+  if (!res.ok) throw new Error("Failed to add monitored page");
+  return res.json();
+}
+
+export async function removeMonitoredPage(pageId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/monitor/pages/${pageId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to remove monitored page");
+}
+
+export async function getMonitorChanges(
+  projectId?: string,
+  limit = 50,
+  offset = 0,
+  changeType?: string,
+  substantiveOnly = false
+): Promise<{ changes: ChangeLogEntry[]; total: number }> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (projectId) params.set("project_id", projectId);
+  if (changeType) params.set("change_type", changeType);
+  if (substantiveOnly) params.set("substantive_only", "true");
+  const res = await fetch(`${API_BASE}/api/monitor/changes?${params}`);
+  if (!res.ok) throw new Error("Failed to get changes");
+  return res.json();
+}
+
+export async function getRecentChanges(
+  projectId?: string,
+  limit = 10
+): Promise<{ changes: ChangeLogEntry[] }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (projectId) params.set("project_id", projectId);
+  const res = await fetch(`${API_BASE}/api/monitor/changes/recent?${params}`);
+  if (!res.ok) throw new Error("Failed to get recent changes");
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Schedule (automated daily crawls)
+// ---------------------------------------------------------------------------
+
+export interface ScheduleConfig {
+  id: string;
+  enabled: boolean;
+  hour_utc: number;
+  minute_utc: number;
+  runs_per_day: number;
+  auto_ingest: boolean;
+  project_id: string | null;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_run_changes: number;
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getSchedule(): Promise<ScheduleConfig> {
+  const res = await fetch(`${API_BASE}/api/monitor/schedule`);
+  if (!res.ok) throw new Error("Failed to get schedule");
+  return res.json();
+}
+
+export async function updateSchedule(data: {
+  enabled?: boolean;
+  hour_utc?: number;
+  minute_utc?: number;
+  runs_per_day?: number;
+  auto_ingest?: boolean;
+  project_id?: string;
+}): Promise<ScheduleConfig> {
+  const res = await fetch(`${API_BASE}/api/monitor/schedule`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to update schedule");
+  return res.json();
+}
+
+export async function approveChange(changeId: string): Promise<{ status: string; ingested: boolean }> {
+  const res = await fetch(`${API_BASE}/api/monitor/changes/${changeId}/approve`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to approve change");
+  return res.json();
+}
+
+export async function dismissChange(changeId: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/monitor/changes/${changeId}/dismiss`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to dismiss change");
+  return res.json();
+}
+
+export async function triggerScheduledCrawl(): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/monitor/schedule/run-now`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to trigger crawl");
+  return res.json();
 }

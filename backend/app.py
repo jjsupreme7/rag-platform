@@ -3,10 +3,14 @@ import logging
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -22,6 +26,172 @@ from retrieval import retrieve
 from ingest import ingest_pdf
 from scraper import scrape_website, discover_and_filter
 from monitor import run_monitor_check, get_monitor_queries, perplexity_chat_search
+from page_monitor import PageMonitor, MONITORED_URLS
+from notifications import send_change_notification
+
+
+# ---------------------------------------------------------------------------
+# Scheduler for automated daily crawls
+# ---------------------------------------------------------------------------
+
+scheduler = BackgroundScheduler(daemon=True)
+
+
+def _scheduled_crawl():
+    """Run by APScheduler on the configured daily schedule."""
+    logger.info("Scheduled daily crawl starting...")
+    sb = get_supabase()
+
+    # Read schedule config to get project_id and auto_ingest
+    try:
+        cfg = sb.table("monitor_schedule_config").select("*").limit(1).execute()
+        config = cfg.data[0] if cfg.data else {}
+        logger.info(f"Schedule config loaded, id={config.get('id')}")
+    except Exception as e:
+        logger.error(f"Failed to load schedule config: {e}")
+        config = {}
+
+    project_id = config.get("project_id")
+    auto_ingest = config.get("auto_ingest", True)
+
+    # Run the crawl — don't auto-ingest; changes go to pending review
+    config_id = config.get("id")
+    status = "unknown"
+    total_changes = 0
+    try:
+        monitor = PageMonitor(project_id=project_id)
+        result = monitor.run_full_crawl(auto_ingest=False, skip_wtd_ingest=True)
+        status = result.get("status", "unknown")
+        total_changes = result.get("pages_new", 0) + result.get("pages_modified", 0)
+        logger.info(f"Scheduled crawl complete: {status}, {total_changes} changes")
+
+        # Send email notification if there are changes
+        changes = result.get("changes", [])
+        if changes:
+            # Fetch the change log entries with IDs for the email
+            try:
+                recent = sb.table("monitor_change_log").select("id, url, change_type, title, summary").order(
+                    "detected_at", desc=True
+                ).limit(len(changes)).execute()
+                email_changes = recent.data or changes
+            except Exception:
+                email_changes = changes
+            send_change_notification(email_changes, result)
+    except Exception as e:
+        status = f"error: {str(e)[:200]}"
+        logger.error(f"Scheduled crawl failed: {e}")
+    finally:
+        # Always update last_run info, even if crawl errored
+        logger.info(f"Scheduled crawl finally block: config_id={config_id}, status={status}, changes={total_changes}")
+        if config_id:
+            try:
+                sb2 = get_supabase()  # Fresh client in case the old one timed out
+                sb2.table("monitor_schedule_config").update({
+                    "last_run_at": datetime.now(timezone.utc).isoformat(),
+                    "last_run_status": status,
+                    "last_run_changes": total_changes,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", config_id).execute()
+                logger.info("Schedule config updated successfully")
+            except Exception as ue:
+                logger.error(f"Failed to update schedule config: {ue}")
+        else:
+            logger.warning("No config_id found, skipping status update")
+
+
+def _ensure_schedule_table():
+    """Create the schedule config table and default row if they don't exist."""
+    try:
+        sb = get_supabase()
+        # Try reading — if the table exists, this works
+        sb.table("monitor_schedule_config").select("id").limit(1).execute()
+    except Exception:
+        # Table doesn't exist — create it via raw SQL
+        try:
+            sb = get_supabase()
+            sb.rpc("exec_sql", {"query": """
+                CREATE TABLE IF NOT EXISTS monitor_schedule_config (
+                    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                    enabled BOOLEAN DEFAULT false,
+                    hour_utc INT DEFAULT 14,
+                    minute_utc INT DEFAULT 0,
+                    runs_per_day INT DEFAULT 2,
+                    auto_ingest BOOLEAN DEFAULT true,
+                    project_id UUID REFERENCES projects(id),
+                    last_run_at TIMESTAMPTZ,
+                    last_run_status TEXT,
+                    last_run_changes INT DEFAULT 0,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )
+            """}).execute()
+        except Exception as e:
+            logger.warning(f"Could not auto-create schedule table: {e}")
+            logger.info("Please run migrations/004_monitor_schedule.sql in Supabase SQL editor")
+            return
+
+    # Ensure default row exists
+    try:
+        sb = get_supabase()
+        existing = sb.table("monitor_schedule_config").select("id").limit(1).execute()
+        if not existing.data:
+            sb.table("monitor_schedule_config").insert({
+                "enabled": False,
+                "hour_utc": 14,
+                "minute_utc": 0,
+                "runs_per_day": 2,
+                "auto_ingest": True,
+            }).execute()
+            logger.info("Created default schedule config row")
+    except Exception as e:
+        logger.warning(f"Could not seed schedule config: {e}")
+
+
+def _sync_scheduler_from_db():
+    """Read schedule config from Supabase and sync the APScheduler job."""
+    try:
+        sb = get_supabase()
+        cfg = sb.table("monitor_schedule_config").select("*").limit(1).execute()
+        if not cfg.data:
+            return
+        config = cfg.data[0]
+
+        # Remove existing scheduled job if any
+        if scheduler.get_job("daily_crawl"):
+            scheduler.remove_job("daily_crawl")
+
+        if config.get("enabled"):
+            hour = config.get("hour_utc", 14)
+            minute = config.get("minute_utc", 0)
+            runs_per_day = config.get("runs_per_day", 2)
+
+            if runs_per_day >= 2:
+                second_hour = (hour + 12) % 24
+                cron_hours = f"{hour},{second_hour}"
+            else:
+                cron_hours = str(hour)
+
+            scheduler.add_job(
+                _scheduled_crawl,
+                CronTrigger(hour=cron_hours, minute=minute),
+                id="daily_crawl",
+                replace_existing=True,
+            )
+            logger.info(f"Scheduled crawl at hours [{cron_hours}]:{minute:02d} UTC ({runs_per_day}x/day)")
+        else:
+            logger.info("Daily crawl schedule is disabled")
+    except Exception as e:
+        logger.warning(f"Failed to sync scheduler from DB: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the scheduler on app startup, stop on shutdown."""
+    scheduler.start()
+    _ensure_schedule_table()
+    _sync_scheduler_from_db()
+    yield
+    scheduler.shutdown(wait=False)
 
 _openai: OpenAI | None = None
 
@@ -34,7 +204,7 @@ def get_openai() -> OpenAI:
 
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
-app = FastAPI(title="RAG Platform API", version="0.3.0")
+app = FastAPI(title="RAG Platform API", version="0.3.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -190,6 +360,42 @@ def get_categories(project_id: str | None = Query(None)):
             break
         offset += batch
     return {"categories": counts}
+
+
+@app.get("/api/documents/source-types")
+def get_source_types(project_id: str | None = Query(None)):
+    sb = get_supabase()
+    counts: dict[str, int] = {}
+    offset = 0
+    batch = 1000
+    while True:
+        q = sb.table("knowledge_documents").select("source_type")
+        if project_id:
+            q = q.eq("project_id", project_id)
+        r = q.range(offset, offset + batch - 1).execute()
+        rows = r.data or []
+        for row in rows:
+            st = row.get("source_type") or "unknown"
+            counts[st] = counts.get(st, 0) + 1
+        if len(rows) < batch:
+            break
+        offset += batch
+    return {"source_types": counts}
+
+
+@app.get("/api/chat/recent")
+def get_recent_chats(
+    limit: int = Query(5, ge=1, le=20),
+    project_id: str | None = Query(None),
+):
+    sb = get_supabase()
+    q = sb.table("chat_usage_log").select(
+        "id, question, chat_model, response_time_ms, sources_count, is_error, created_at"
+    )
+    if project_id:
+        q = q.eq("project_id", project_id)
+    r = q.order("created_at", desc=True).limit(limit).execute()
+    return {"chats": r.data or []}
 
 
 @app.get("/api/documents/{doc_id}")
@@ -658,3 +864,302 @@ def monitor_stop(job_id: str):
         return JSONResponse(status_code=404, content={"error": "Job not found"})
     _monitor_stop_flags[job_id] = True
     return {"job_id": job_id, "status": "stop_requested"}
+
+
+# ---------------------------------------------------------------------------
+# Page Monitor (DOR page-change detection)
+# ---------------------------------------------------------------------------
+
+_crawl_jobs: dict[str, dict] = {}
+_crawl_stop_flags: dict[str, bool] = {}
+
+
+class CrawlRequest(BaseModel):
+    project_id: str | None = None
+    auto_ingest: bool = True
+
+
+class AddPageRequest(BaseModel):
+    url: str
+    category: str | None = None
+    project_id: str | None = None
+
+
+@app.post("/api/monitor/crawl")
+@limiter.limit("3/minute")
+def crawl_start(request: Request, req: CrawlRequest):
+    """Start a full page crawl + change detection job."""
+    job_id = str(uuid.uuid4())[:8]
+
+    _crawl_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "starting",
+        "total_pages": len(MONITORED_URLS),
+        "pages_crawled": 0,
+        "pages_new": 0,
+        "pages_modified": 0,
+        "pages_unchanged": 0,
+        "pages_error": 0,
+        "substantive_changes": 0,
+        "auto_ingested": 0,
+        "new_wtds_found": 0,
+        "current_url": "",
+        "elapsed_seconds": 0,
+        "started_at": time.time(),
+        "changes": [],
+        "errors": [],
+    }
+    _crawl_stop_flags[job_id] = False
+
+    def on_progress(stats: dict):
+        _crawl_jobs[job_id].update(stats)
+        _crawl_jobs[job_id]["job_id"] = job_id
+        _crawl_jobs[job_id]["elapsed_seconds"] = (
+            time.time() - _crawl_jobs[job_id].get("started_at", time.time())
+        )
+
+    def run():
+        try:
+            monitor = PageMonitor(project_id=req.project_id)
+            result = monitor.run_full_crawl(
+                auto_ingest=req.auto_ingest,
+                on_progress=on_progress,
+                stop_flag=lambda: _crawl_stop_flags.get(job_id, False),
+            )
+            _crawl_jobs[job_id].update(result)
+            _crawl_jobs[job_id]["job_id"] = job_id
+        except Exception as e:
+            _crawl_jobs[job_id]["status"] = "error"
+            _crawl_jobs[job_id]["error"] = str(e)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.get("/api/monitor/crawl/status/{job_id}")
+def crawl_status(job_id: str):
+    """Get crawl job status."""
+    job = _crawl_jobs.get(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    if job.get("status") == "running":
+        job["elapsed_seconds"] = time.time() - job.get("started_at", time.time())
+    return job
+
+
+@app.get("/api/monitor/crawl/jobs")
+def crawl_jobs_list():
+    """List all crawl jobs."""
+    jobs = sorted(
+        _crawl_jobs.values(),
+        key=lambda j: j.get("started_at", 0),
+        reverse=True,
+    )
+    return jobs
+
+
+@app.post("/api/monitor/crawl/stop/{job_id}")
+def crawl_stop(job_id: str):
+    """Stop a running crawl job."""
+    if job_id not in _crawl_jobs:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    _crawl_stop_flags[job_id] = True
+    return {"job_id": job_id, "status": "stop_requested"}
+
+
+@app.get("/api/monitor/pages")
+def list_monitored_pages(project_id: str | None = Query(None)):
+    """List all monitored pages with their last check status."""
+    sb = get_supabase()
+    q = sb.table("monitor_page_state").select("*")
+    if project_id:
+        q = q.eq("project_id", project_id)
+    r = q.order("last_checked_at", desc=True).execute()
+    return {"pages": r.data or [], "total": len(r.data or [])}
+
+
+@app.post("/api/monitor/pages")
+def add_monitored_page(req: AddPageRequest):
+    """Add a new URL to the monitored pages list."""
+    sb = get_supabase()
+    from scraper import categorize_url
+    row = {
+        "url": req.url,
+        "category": req.category or categorize_url(req.url),
+        "status": "active",
+    }
+    if req.project_id:
+        row["project_id"] = req.project_id
+    try:
+        r = sb.table("monitor_page_state").insert(row).execute()
+        return r.data[0]
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.delete("/api/monitor/pages/{page_id}")
+def remove_monitored_page(page_id: str):
+    """Remove a monitored page."""
+    sb = get_supabase()
+    sb.table("monitor_page_state").delete().eq("id", page_id).execute()
+    return {"status": "deleted"}
+
+
+@app.get("/api/monitor/changes")
+def list_changes(
+    project_id: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    change_type: str | None = Query(None),
+    substantive_only: bool = Query(False),
+):
+    """List detected changes with filtering."""
+    sb = get_supabase()
+    q = sb.table("monitor_change_log").select("*", count="exact")
+    if project_id:
+        q = q.eq("project_id", project_id)
+    if change_type:
+        q = q.eq("change_type", change_type)
+    if substantive_only:
+        q = q.eq("is_substantive", True)
+    r = q.order("detected_at", desc=True).range(offset, offset + limit - 1).execute()
+    return {"changes": r.data or [], "total": r.count}
+
+
+@app.post("/api/monitor/changes/{change_id}/approve")
+def approve_change(change_id: str):
+    """Approve a pending change — ingest/re-ingest the page into the knowledge base."""
+    sb = get_supabase()
+    try:
+        r = sb.table("monitor_change_log").select("*").eq("id", change_id).single().execute()
+        change = r.data
+    except Exception:
+        return JSONResponse(status_code=404, content={"error": "Change not found"})
+
+    if change.get("review_status") == "approved":
+        return {"status": "already_approved", "change_id": change_id}
+
+    # Ingest the page
+    url = change["url"]
+    project_id = change.get("project_id")
+    monitor = PageMonitor(project_id=project_id)
+    ingested = monitor._reingest_page(url)
+
+    # Update change status
+    sb.table("monitor_change_log").update({
+        "review_status": "approved",
+        "auto_ingested": ingested,
+    }).eq("id", change_id).execute()
+
+    return {"status": "approved", "ingested": ingested, "change_id": change_id}
+
+
+@app.post("/api/monitor/changes/{change_id}/dismiss")
+def dismiss_change(change_id: str):
+    """Dismiss a pending change — skip ingestion."""
+    sb = get_supabase()
+    try:
+        sb.table("monitor_change_log").update({
+            "review_status": "dismissed",
+        }).eq("id", change_id).execute()
+        return {"status": "dismissed", "change_id": change_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/monitor/changes/recent")
+def recent_changes(
+    project_id: str | None = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Dashboard widget: last N substantive changes."""
+    sb = get_supabase()
+    q = sb.table("monitor_change_log").select("*").eq("is_substantive", True)
+    if project_id:
+        q = q.eq("project_id", project_id)
+    r = q.order("detected_at", desc=True).limit(limit).execute()
+    return {"changes": r.data or []}
+
+
+# ---------------------------------------------------------------------------
+# Schedule Management (automated daily crawls)
+# ---------------------------------------------------------------------------
+
+class ScheduleUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    hour_utc: Optional[int] = None
+    minute_utc: Optional[int] = None
+    runs_per_day: Optional[int] = None
+    auto_ingest: Optional[bool] = None
+    project_id: Optional[str] = None
+
+
+@app.get("/api/monitor/schedule")
+def get_schedule():
+    """Get the current daily crawl schedule config."""
+    sb = get_supabase()
+    try:
+        r = sb.table("monitor_schedule_config").select("*").limit(1).execute()
+        if r.data:
+            config = r.data[0]
+            # Add next run time from scheduler
+            job = scheduler.get_job("daily_crawl")
+            config["next_run_at"] = (
+                job.next_run_time.isoformat() if job and job.next_run_time else None
+            )
+            return config
+        return {"enabled": False, "hour_utc": 14, "minute_utc": 0, "auto_ingest": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/monitor/schedule")
+def update_schedule(req: ScheduleUpdate):
+    """Update the daily crawl schedule and sync the scheduler."""
+    sb = get_supabase()
+    try:
+        # Get existing config
+        existing = sb.table("monitor_schedule_config").select("*").limit(1).execute()
+        if not existing.data:
+            # Create default row
+            row = {
+                "enabled": req.enabled if req.enabled is not None else False,
+                "hour_utc": req.hour_utc if req.hour_utc is not None else 14,
+                "minute_utc": req.minute_utc if req.minute_utc is not None else 0,
+                "auto_ingest": req.auto_ingest if req.auto_ingest is not None else True,
+            }
+            if req.project_id:
+                row["project_id"] = req.project_id
+            sb.table("monitor_schedule_config").insert(row).execute()
+        else:
+            config_id = existing.data[0]["id"]
+            updates = {"updated_at": datetime.now(timezone.utc).isoformat()}
+            if req.enabled is not None:
+                updates["enabled"] = req.enabled
+            if req.hour_utc is not None:
+                updates["hour_utc"] = req.hour_utc
+            if req.minute_utc is not None:
+                updates["minute_utc"] = req.minute_utc
+            if req.runs_per_day is not None:
+                updates["runs_per_day"] = req.runs_per_day
+            if req.auto_ingest is not None:
+                updates["auto_ingest"] = req.auto_ingest
+            if req.project_id is not None:
+                updates["project_id"] = req.project_id
+            sb.table("monitor_schedule_config").update(updates).eq("id", config_id).execute()
+
+        # Sync scheduler to pick up new config
+        _sync_scheduler_from_db()
+
+        return get_schedule()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/monitor/schedule/run-now")
+def schedule_run_now():
+    """Trigger an immediate scheduled crawl (same as the daily job would do)."""
+    thread = threading.Thread(target=_scheduled_crawl, daemon=True)
+    thread.start()
+    return {"status": "started", "message": "Scheduled crawl triggered immediately"}
