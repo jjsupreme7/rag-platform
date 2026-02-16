@@ -271,11 +271,14 @@ export async function sendChatMessage(
   onChunk: (text: string) => void,
   onSources: (sources: ChatSource[]) => void,
   projectId?: string,
+  modelOverride?: string,
 ): Promise<void> {
+  const body: Record<string, unknown> = { message, history, project_id: projectId };
+  if (modelOverride) body.model_override = modelOverride;
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, project_id: projectId }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error("Failed to send message");
 

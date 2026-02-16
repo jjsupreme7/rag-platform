@@ -14,7 +14,7 @@ export default function SettingsPage() {
   const [name, setName] = useState(activeProject?.name || "");
   const [description, setDescription] = useState(activeProject?.description || "");
   const [systemPrompt, setSystemPrompt] = useState(activeProject?.system_prompt || "");
-  const [chatModel, setChatModel] = useState(activeProject?.chat_model || "gpt-5.2");
+  const [chatModel, setChatModel] = useState(activeProject?.chat_model || "");
   const [embeddingModel, setEmbeddingModel] = useState(activeProject?.embedding_model || "text-embedding-3-small");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -28,7 +28,7 @@ export default function SettingsPage() {
     setName(activeProject?.name || "");
     setDescription(activeProject?.description || "");
     setSystemPrompt(activeProject?.system_prompt || "");
-    setChatModel(activeProject?.chat_model || "gpt-5.2");
+    setChatModel(activeProject?.chat_model || "");
     setEmbeddingModel(activeProject?.embedding_model || "text-embedding-3-small");
     setMessage("");
   }
@@ -177,9 +177,11 @@ export default function SettingsPage() {
                     onChange={(e) => setChatModel(e.target.value)}
                     className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm cursor-pointer hover:border-primary/40 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
                   >
-                    <option value="gpt-5.2">GPT-5.2</option>
-                    <option value="gpt-4o">GPT-4o</option>
-                    <option value="gpt-4o-mini">GPT-4o-mini</option>
+                    <option value="">Auto-Route (Recommended)</option>
+                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
+                    <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5 (Balanced)</option>
+                    <option value="claude-opus-4-6">Claude Opus 4.6 (Deep Reasoning)</option>
+                    <option value="gpt-5.2">GPT-5.2 (Legacy)</option>
                   </select>
                 </div>
                 <div>

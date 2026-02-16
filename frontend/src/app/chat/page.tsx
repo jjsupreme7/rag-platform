@@ -4,7 +4,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Send, Plus, Trash2, MessageSquare, Globe, Database } from "lucide-react";
+import { Send, Plus, Trash2, MessageSquare, Globe, Database, ChevronDown } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import {
   sendChatMessage,
@@ -235,6 +235,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load conversations from localStorage on mount or project change
@@ -353,6 +354,7 @@ export default function ChatPage() {
           sources = s;
         },
         activeProject?.id,
+        selectedModel || undefined,
       );
       // Attach sources and save
       setMessages((prev) => {
@@ -492,6 +494,20 @@ export default function ChatPage() {
 
         {/* Input */}
         <form onSubmit={handleSend} className="flex gap-2">
+          <div className="relative shrink-0">
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="h-9 appearance-none rounded-lg border border-input bg-background pl-3 pr-8 text-xs cursor-pointer hover:border-primary/40 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+            >
+              <option value="">Auto</option>
+              <option value="claude-haiku-4-5-20251001">Haiku (Fast)</option>
+              <option value="claude-sonnet-4-5-20250929">Sonnet (Balanced)</option>
+              <option value="claude-opus-4-6">Opus (Deep)</option>
+              <option value="gpt-5.2">GPT-5.2</option>
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          </div>
           <Input
             placeholder="Ask about Washington tax law..."
             value={input}

@@ -22,6 +22,7 @@ from slowapi.errors import RateLimitExceeded
 
 from config import settings
 from db import get_supabase
+from model_router import get_anthropic, route_model
 from retrieval import retrieve
 from ingest import ingest_pdf
 from scraper import scrape_website, discover_and_filter
@@ -242,7 +243,7 @@ class ProjectCreate(BaseModel):
     name: str
     description: str = ""
     system_prompt: str = ""
-    chat_model: str = "gpt-5.2"
+    chat_model: str = ""
     embedding_model: str = "text-embedding-3-small"
 
 
@@ -467,6 +468,7 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = []
     top_k: int = 6
     project_id: str | None = None
+    model_override: str | None = None
 
 
 DEFAULT_SYSTEM_PROMPT = """You are an expert Washington State tax law assistant with access to a knowledge base of legal documents, WAC/RCW codes, Excise Tax Advisories, and WA Department of Revenue guidance. You also have access to live web search results from dor.wa.gov, app.leg.wa.gov (RCW statutes, WAC regulations), and taxpedia.dor.wa.gov (tax determinations).
@@ -550,7 +552,15 @@ def chat(request: Request, req: ChatRequest):
 
     # Load project-specific settings
     system_prompt = DEFAULT_SYSTEM_PROMPT
-    chat_model = settings.CHAT_MODEL
+    chat_model = None  # Will be set by router, project override, or user override
+    complexity = None
+
+    # 1. User-selected model override (from chat dropdown) takes priority
+    if req.model_override:
+        chat_model = req.model_override
+        complexity = "manual"
+
+    # 2. Check project-level model setting
     if req.project_id:
         try:
             project = sb.table("projects").select(
@@ -558,10 +568,17 @@ def chat(request: Request, req: ChatRequest):
             ).eq("id", req.project_id).single().execute()
             if project.data.get("system_prompt"):
                 system_prompt = project.data["system_prompt"]
-            if project.data.get("chat_model"):
-                chat_model = project.data["chat_model"]
+            if chat_model is None:
+                proj_model = project.data.get("chat_model", "")
+                if proj_model and proj_model not in ("gpt-5.2", ""):
+                    chat_model = proj_model
+                    complexity = "override"
         except Exception:
             pass
+
+    # 3. Automatic model routing if no override
+    if chat_model is None:
+        chat_model, complexity = route_model(req.message, len(req.history))
 
     # 1. Retrieve relevant chunks via hybrid search + reranking
     chunks = retrieve(req.message, req.top_k, project_id=req.project_id)
@@ -577,33 +594,56 @@ def chat(request: Request, req: ChatRequest):
     # 2. Build context
     context = _build_rag_prompt(chunks)
 
-    # 3. Build messages for OpenAI
-    messages = [{"role": "system", "content": system_prompt + "\n\nRetrieved sources:\n\n" + context}]
-    for msg in req.history:
-        messages.append({"role": msg.role, "content": msg.content})
-    messages.append({"role": "user", "content": req.message})
+    # Detect provider based on model name
+    use_openai = chat_model.startswith("gpt-")
 
-    # 4. Stream response from OpenAI and log to DB
-    client = get_openai()
+    # 3. Build messages
+    if use_openai:
+        messages = [{"role": "system", "content": system_prompt + "\n\nRetrieved sources:\n\n" + context}]
+        for msg in req.history:
+            messages.append({"role": msg.role, "content": msg.content})
+        messages.append({"role": "user", "content": req.message})
+    else:
+        anthropic_system = system_prompt + "\n\nRetrieved sources:\n\n" + context
+        anthropic_messages = []
+        for msg in req.history:
+            anthropic_messages.append({"role": msg.role, "content": msg.content})
+        anthropic_messages.append({"role": "user", "content": req.message})
+
+    # 4. Stream response and log to DB
     local_count = sum(1 for c in chunks if c.get("source", "local") == "local")
     pplx_count = sum(1 for c in chunks if c.get("source") == "perplexity")
     started_at = time.time()
+    logger.info(f"Chat routing: model={chat_model}, complexity={complexity}, provider={'openai' if use_openai else 'anthropic'}")
 
     def generate():
         full_response: list[str] = []
         is_error = False
         try:
-            stream = client.chat.completions.create(
-                model=chat_model,
-                max_completion_tokens=2048,
-                messages=messages,
-                stream=True,
-            )
-            for chunk in stream:
-                text = chunk.choices[0].delta.content
-                if text:
-                    full_response.append(text)
-                    yield text
+            if use_openai:
+                client = get_openai()
+                stream = client.chat.completions.create(
+                    model=chat_model,
+                    max_completion_tokens=2048,
+                    messages=messages,
+                    stream=True,
+                )
+                for chunk in stream:
+                    text = chunk.choices[0].delta.content
+                    if text:
+                        full_response.append(text)
+                        yield text
+            else:
+                client = get_anthropic()
+                with client.messages.stream(
+                    model=chat_model,
+                    max_tokens=2048,
+                    system=anthropic_system,
+                    messages=anthropic_messages,
+                ) as stream:
+                    for text in stream.text_stream:
+                        full_response.append(text)
+                        yield text
         except Exception as e:
             is_error = True
             error_text = f"\n\n[Error: {e}]"
@@ -622,6 +662,7 @@ def chat(request: Request, req: ChatRequest):
                     "sources_count": len(chunks),
                     "sources_json": sources,
                     "chat_model": chat_model,
+                    "complexity": complexity,
                     "endpoint": "chat",
                     "response_time_ms": elapsed_ms,
                     "is_error": is_error,

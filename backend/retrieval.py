@@ -1,11 +1,15 @@
-"""Hybrid search with RRF fusion and LLM reranking."""
+"""Hybrid search with RRF fusion and Cohere reranking (GPT-4o-mini fallback)."""
 
 import json
+import logging
 
+import cohere
 from openai import OpenAI
 
 from config import settings
 from db import get_supabase
+
+logger = logging.getLogger(__name__)
 
 RRF_K = 60  # Standard Reciprocal Rank Fusion constant
 
@@ -91,8 +95,42 @@ def rrf_fuse(
     return fused
 
 
+def rerank_cohere(query: str, chunks: list[dict], top_k: int = 6) -> list[dict]:
+    """Use Cohere Rerank 3.5 to rerank chunks by relevance."""
+    if not chunks or len(chunks) <= top_k:
+        return chunks[:top_k]
+
+    if not settings.COHERE_API_KEY:
+        return None  # Signal to try fallback
+
+    # Extract text for Cohere (include citation for context)
+    documents = []
+    for c in chunks:
+        text = (c.get("chunk_text") or "")[:1500]
+        citation = c.get("citation", "")
+        documents.append(f"[{citation}] {text}" if citation else text)
+
+    try:
+        co = cohere.Client(api_key=settings.COHERE_API_KEY)
+        response = co.rerank(
+            model="rerank-v3.5",
+            query=query,
+            documents=documents,
+            top_n=top_k,
+        )
+        reranked = []
+        for result in response.results:
+            chunk = chunks[result.index]
+            chunk["rerank_score"] = result.relevance_score
+            reranked.append(chunk)
+        return reranked
+    except Exception as e:
+        logger.warning(f"Cohere reranking failed: {e}, trying GPT-4o-mini fallback")
+        return None  # Signal to try fallback
+
+
 def rerank_with_llm(query: str, chunks: list[dict], top_k: int = 6) -> list[dict]:
-    """Use GPT-4o-mini to rerank chunks by relevance. Falls back to RRF order on error."""
+    """Fallback reranker using GPT-4o-mini when Cohere is unavailable."""
     if not chunks or len(chunks) <= top_k:
         return chunks[:top_k]
 
@@ -114,7 +152,7 @@ def rerank_with_llm(query: str, chunks: list[dict], top_k: int = 6) -> list[dict
     try:
         client = _get_openai()
         resp = client.chat.completions.create(
-            model=settings.RERANK_MODEL,
+            model="gpt-4o-mini",
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -127,10 +165,23 @@ def rerank_with_llm(query: str, chunks: list[dict], top_k: int = 6) -> list[dict
         return chunks[:top_k]
 
 
+def rerank(query: str, chunks: list[dict], top_k: int = 6) -> list[dict]:
+    """Rerank chunks: tries Cohere first, falls back to GPT-4o-mini."""
+    # Try Cohere first
+    result = rerank_cohere(query, chunks, top_k)
+    if result is not None:
+        return result
+
+    # Fallback to GPT-4o-mini
+    logger.info("Using GPT-4o-mini fallback reranker")
+    return rerank_with_llm(query, chunks, top_k)
+
+
 def retrieve(query: str, top_k: int = 6, project_id: str | None = None) -> list[dict]:
     """
-    Full retrieval pipeline: embed -> hybrid search -> RRF fusion -> LLM rerank.
+    Full retrieval pipeline: embed -> hybrid search -> RRF fusion -> rerank.
 
+    Uses Cohere Rerank 3.5 when available, falls back to GPT-4o-mini.
     This is the main entry point called by app.py.
     """
     embedding = embed_query(query)
@@ -140,6 +191,6 @@ def retrieve(query: str, top_k: int = 6, project_id: str | None = None) -> list[
 
     fused = rrf_fuse(vec_results, kw_results)
 
-    reranked = rerank_with_llm(query, fused[:15], top_k=top_k)
+    reranked = rerank(query, fused[:15], top_k=top_k)
 
     return reranked
