@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fetchDocuments, fetchCategories, fetchDocument, type Document, type Chunk } from "@/lib/api";
+import { fetchDocuments, fetchCategories, fetchDocument, fetchTags, type Document, type Chunk, type TagCount } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 
 const PAGE_SIZE = 25;
@@ -33,6 +33,10 @@ export default function DocumentsPage() {
   const [categories, setCategories] = useState<Record<string, number>>({});
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedSourceType, setSelectedSourceType] = useState<string | null>(null);
+  const [tags, setTags] = useState<TagCount[]>([]);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [tagSearchQuery, setTagSearchQuery] = useState("");
+  const [showAllTags, setShowAllTags] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [chunksLoading, setChunksLoading] = useState(false);
@@ -42,24 +46,27 @@ export default function DocumentsPage() {
     setPage(0);
     setSelectedCategory(null);
     setSelectedSourceType(null);
+    setSelectedTag(null);
+    setTagSearchQuery("");
   }, [activeProject?.id]);
 
-  // Load categories
+  // Load categories and tags
   useEffect(() => {
     fetchCategories(activeProject?.id).then(setCategories).catch(console.error);
+    fetchTags(activeProject?.id, 100).then(setTags).catch(console.error);
   }, [activeProject?.id]);
 
   // Load documents when page, category, or source type changes
   useEffect(() => {
     setLoading(true);
-    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE, selectedCategory || undefined, activeProject?.id, selectedSourceType || undefined)
+    fetchDocuments(page * PAGE_SIZE, PAGE_SIZE, selectedCategory || undefined, activeProject?.id, selectedSourceType || undefined, selectedTag || undefined)
       .then((r) => {
         setDocuments(r.documents);
         setTotal(r.total);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [page, selectedCategory, selectedSourceType, activeProject?.id]);
+  }, [page, selectedCategory, selectedSourceType, selectedTag, activeProject?.id]);
 
   function handleRowClick(doc: Document) {
     setSelectedDoc(doc);
@@ -85,6 +92,7 @@ export default function DocumentsPage() {
           <p className="text-sm text-muted-foreground">
             {total.toLocaleString()} documents
             {selectedCategory ? ` in ${selectedCategory}` : " in knowledge base"}
+            {selectedTag ? ` tagged "${selectedTag}"` : ""}
           </p>
         </div>
       </div>
@@ -146,6 +154,64 @@ export default function DocumentsPage() {
         ))}
       </div>
 
+      {/* Tag filter */}
+      {tags.length > 0 && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-medium text-muted-foreground">Tags</span>
+            <input
+              type="text"
+              placeholder="Search tags..."
+              value={tagSearchQuery}
+              onChange={(e) => setTagSearchQuery(e.target.value)}
+              className="px-2 py-1 text-sm border rounded-md bg-background w-48"
+            />
+            {selectedTag && (
+              <button
+                onClick={() => { setSelectedTag(null); setPage(0); }}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {(tagSearchQuery
+              ? tags.filter((t) => t.tag.toLowerCase().includes(tagSearchQuery.toLowerCase()))
+              : showAllTags ? tags : tags.slice(0, 20)
+            ).map(({ tag, count }) => (
+              <button
+                key={tag}
+                onClick={() => { setSelectedTag(selectedTag === tag ? null : tag); setPage(0); }}
+                className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                  selectedTag === tag
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background border-border hover:bg-accent"
+                }`}
+              >
+                {tag} ({count})
+              </button>
+            ))}
+            {!tagSearchQuery && !showAllTags && tags.length > 20 && (
+              <button
+                onClick={() => setShowAllTags(true)}
+                className="px-2 py-0.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:bg-accent"
+              >
+                +{tags.length - 20} more
+              </button>
+            )}
+            {!tagSearchQuery && showAllTags && tags.length > 20 && (
+              <button
+                onClick={() => setShowAllTags(false)}
+                className="px-2 py-0.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:bg-accent"
+              >
+                Show less
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-muted-foreground">Loading...</p>
       ) : (
@@ -157,6 +223,7 @@ export default function DocumentsPage() {
                   <TableHead>Title</TableHead>
                   <TableHead>Citation</TableHead>
                   <TableHead>Category</TableHead>
+                  <TableHead>Tags</TableHead>
                   <TableHead>Source</TableHead>
                   <TableHead className="text-right">Chunks</TableHead>
                 </TableRow>
@@ -178,6 +245,25 @@ export default function DocumentsPage() {
                       {doc.law_category && (
                         <Badge variant="secondary">{doc.law_category}</Badge>
                       )}
+                    </TableCell>
+                    <TableCell className="max-w-[250px]">
+                      <div className="flex flex-wrap gap-1">
+                        {(doc.topic_tags || []).slice(0, 2).map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="outline"
+                            className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-accent"
+                            onClick={(e) => { e.stopPropagation(); setSelectedTag(tag); setPage(0); }}
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                        {(doc.topic_tags || []).length > 2 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            +{doc.topic_tags!.length - 2}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -255,6 +341,20 @@ export default function DocumentsPage() {
                       >
                         {selectedDoc.source_url}
                       </a>
+                    )}
+                    {selectedDoc.topic_tags && selectedDoc.topic_tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {selectedDoc.topic_tags.map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="outline"
+                            className="text-xs cursor-pointer hover:bg-accent"
+                            onClick={() => { setSelectedDoc(null); setSelectedTag(tag); setPage(0); }}
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </SheetDescription>

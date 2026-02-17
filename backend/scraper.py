@@ -28,7 +28,7 @@ DOMAIN_INCLUDE_PATTERNS = {
     "dor.wa.gov": [
         "/laws-rules/",
         "/taxes-rates/",
-        "/education/",
+        "/education/industry-guides/",
         "/forms-publications/",
         "/interim-guidance",
         "/interim_guidance",
@@ -36,7 +36,8 @@ DOMAIN_INCLUDE_PATTERNS = {
         "/tax-topics",
         "/industry-guides/",
         "/washington-tax-decisions",
-        ".pdf",
+        "wtd",   # catches WTD PDFs in /sites/default/files/
+        "eta",   # catches ETA PDFs in /sites/default/files/
     ],
     "app.leg.wa.gov": [
         "/rcw/",
@@ -68,6 +69,13 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "/filter/",
     "?page=",
     "/comment/",
+    "/education/audits/",
+    "/education/events-workshops/",
+    "/open-data/",
+    "/get-form-or-publication/",
+    "/taxpayer-rights/",
+    "/my-account/",
+    "/licensing/",
 ]
 
 

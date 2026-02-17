@@ -5,6 +5,8 @@ import "./globals.css";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ProjectProvider } from "@/lib/project-context";
+import { ThemeProvider } from "@/components/theme-provider";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,21 +29,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ProjectProvider>
-          <SidebarProvider>
-            <AppSidebar />
-            <SidebarInset>
-              <header className="flex h-14 items-center gap-2 border-b px-6">
-                <SidebarTrigger />
-              </header>
-              <main className="flex-1 p-6">{children}</main>
-            </SidebarInset>
-          </SidebarProvider>
-        </ProjectProvider>
+        <ThemeProvider>
+          <ProjectProvider>
+            <SidebarProvider>
+              <AppSidebar />
+              <SidebarInset>
+                <header className="flex h-14 items-center justify-between border-b px-6 bg-card/50 backdrop-blur-sm">
+                  <SidebarTrigger />
+                  <ThemeToggle />
+                </header>
+                <main className="flex-1 p-6">{children}</main>
+              </SidebarInset>
+            </SidebarProvider>
+          </ProjectProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

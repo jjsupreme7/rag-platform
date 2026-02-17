@@ -4,12 +4,14 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Send, Plus, Trash2, MessageSquare, Globe, Database, ChevronDown } from "lucide-react";
+import { Send, Plus, Trash2, MessageSquare, Globe, Database, ChevronDown, Tag, X } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import {
   sendChatMessage,
+  fetchTags,
   type ChatMessage,
   type ChatSource,
+  type TagCount,
 } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 
@@ -236,6 +238,10 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
+  const [tags, setTags] = useState<TagCount[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [showTagPicker, setShowTagPicker] = useState(false);
+  const [tagSearch, setTagSearch] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load conversations from localStorage on mount or project change
@@ -243,6 +249,7 @@ export default function ChatPage() {
     setConversations(loadConversations(activeProject?.id));
     setMessages([]);
     setActiveId(null);
+    fetchTags(activeProject?.id, 50).then(setTags).catch(console.error);
   }, [activeProject?.id]);
 
   // Save conversations whenever they change
@@ -355,6 +362,7 @@ export default function ChatPage() {
         },
         activeProject?.id,
         selectedModel || undefined,
+        selectedTags.length > 0 ? selectedTags : undefined,
       );
       // Attach sources and save
       setMessages((prev) => {
@@ -492,6 +500,69 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
+        {/* Tag scope picker */}
+        {showTagPicker && tags.length > 0 && (
+          <div className="mb-2 p-3 rounded-lg border border-border bg-muted/30">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-medium text-muted-foreground">Scope retrieval to tags</span>
+              {selectedTags.length > 0 && (
+                <button
+                  onClick={() => setSelectedTags([])}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5"
+                >
+                  <X className="h-3 w-3" /> Clear
+                </button>
+              )}
+              <input
+                type="text"
+                placeholder="Filter..."
+                value={tagSearch}
+                onChange={(e) => setTagSearch(e.target.value)}
+                className="px-2 py-0.5 text-xs border rounded-md bg-background w-36 ml-auto"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(tagSearch
+                ? tags.filter((t) => t.tag.toLowerCase().includes(tagSearch.toLowerCase()))
+                : tags.slice(0, 20)
+              ).map(({ tag, count }) => (
+                <button
+                  key={tag}
+                  onClick={() =>
+                    setSelectedTags((prev) =>
+                      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+                    )
+                  }
+                  className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                    selectedTags.includes(tag)
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-background border-border hover:bg-accent"
+                  }`}
+                >
+                  {tag} ({count})
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Selected tags indicator */}
+        {selectedTags.length > 0 && !showTagPicker && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            <span className="text-xs text-muted-foreground mr-1">Scoped to:</span>
+            {selectedTags.map((tag) => (
+              <Badge
+                key={tag}
+                variant="secondary"
+                className="text-xs cursor-pointer hover:bg-destructive/20"
+                onClick={() => setSelectedTags((prev) => prev.filter((t) => t !== tag))}
+              >
+                {tag} <X className="h-2.5 w-2.5 ml-1" />
+              </Badge>
+            ))}
+          </div>
+        )}
+
         {/* Input */}
         <form onSubmit={handleSend} className="flex gap-2">
           <div className="relative shrink-0">
@@ -508,6 +579,18 @@ export default function ChatPage() {
             </select>
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           </div>
+          <button
+            type="button"
+            onClick={() => setShowTagPicker((v) => !v)}
+            className={`h-9 px-2.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors ${
+              selectedTags.length > 0
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-input bg-background text-muted-foreground hover:border-primary/40"
+            }`}
+          >
+            <Tag className="h-3.5 w-3.5" />
+            {selectedTags.length > 0 ? selectedTags.length : "Tags"}
+          </button>
           <Input
             placeholder="Ask about Washington tax law..."
             value={input}

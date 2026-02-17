@@ -48,12 +48,12 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="border-b px-4 py-4">
         <div className="flex items-center gap-2.5 mb-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/20 text-primary shadow-lg shadow-primary/10">
             <Database className="h-4 w-4" />
           </div>
           <div>
             <h2 className="text-sm font-semibold tracking-tight">RAG Platform</h2>
-            <p className="text-[11px] text-muted-foreground">Knowledge Base</p>
+            <p className="text-[11px] text-muted-foreground/60 tracking-wider">KNOWLEDGE BASE</p>
           </div>
         </div>
         {loading ? (
@@ -100,8 +100,8 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="border-t px-4 py-3">
-        <p className="text-[11px] text-muted-foreground/50">
-          RAG Platform v0.3.0
+        <p className="text-[11px] text-muted-foreground/40 tracking-wider">
+          RAG PLATFORM v0.3.0
         </p>
       </SidebarFooter>
     </Sidebar>

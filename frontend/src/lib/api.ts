@@ -103,7 +103,8 @@ export async function fetchDocuments(
   limit = 50,
   category?: string,
   projectId?: string,
-  sourceType?: string
+  sourceType?: string,
+  tag?: string
 ): Promise<DocumentsResponse> {
   const params = new URLSearchParams({
     offset: String(offset),
@@ -112,6 +113,7 @@ export async function fetchDocuments(
   if (category) params.set("category", category);
   if (projectId) params.set("project_id", projectId);
   if (sourceType) params.set("source_type", sourceType);
+  if (tag) params.set("tag", tag);
   const res = await fetch(`${API_BASE}/api/documents?${params}`);
   if (!res.ok) throw new Error("Failed to fetch documents");
   return res.json();
@@ -133,6 +135,20 @@ export async function fetchSourceTypes(projectId?: string): Promise<Record<strin
   if (!res.ok) throw new Error("Failed to fetch source types");
   const data = await res.json();
   return data.source_types;
+}
+
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+export async function fetchTags(projectId?: string, limit = 50): Promise<TagCount[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (projectId) params.set("project_id", projectId);
+  const res = await fetch(`${API_BASE}/api/documents/tags?${params}`);
+  if (!res.ok) throw new Error("Failed to fetch tags");
+  const data = await res.json();
+  return data.tags;
 }
 
 export interface RecentChat {
@@ -207,12 +223,15 @@ export async function searchDocuments(
   query: string,
   topK = 5,
   threshold = 0.3,
-  projectId?: string
+  projectId?: string,
+  tags?: string[]
 ): Promise<SearchResponse> {
+  const body: Record<string, unknown> = { query, top_k: topK, threshold, project_id: projectId };
+  if (tags && tags.length > 0) body.tags = tags;
   const res = await fetch(`${API_BASE}/api/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, top_k: topK, threshold, project_id: projectId }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error("Failed to search");
   return res.json();
@@ -272,9 +291,11 @@ export async function sendChatMessage(
   onSources: (sources: ChatSource[]) => void,
   projectId?: string,
   modelOverride?: string,
+  tags?: string[],
 ): Promise<void> {
   const body: Record<string, unknown> = { message, history, project_id: projectId };
   if (modelOverride) body.model_override = modelOverride;
+  if (tags && tags.length > 0) body.tags = tags;
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -14,6 +14,20 @@ logger = logging.getLogger(__name__)
 RRF_K = 60  # Standard Reciprocal Rank Fusion constant
 
 
+def _get_tagged_doc_ids(tags: list[str], project_id: str | None = None) -> set[str]:
+    """Fetch document IDs whose topic_tags overlap with the given tags."""
+    sb = get_supabase()
+    doc_ids: set[str] = set()
+    for tag in tags:
+        q = sb.table("knowledge_documents").select("id").contains("topic_tags", [tag])
+        if project_id:
+            q = q.eq("project_id", project_id)
+        r = q.execute()
+        for row in r.data or []:
+            doc_ids.add(row["id"])
+    return doc_ids
+
+
 def _get_openai() -> OpenAI:
     return OpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -35,14 +49,16 @@ def vector_search(
         "query_embedding": embedding,
         "match_threshold": threshold,
         "match_count": top_k,
+        "filter_project_id": project_id,
     }
-    if project_id:
-        params["filter_project_id"] = project_id
     r = sb.rpc("search_tax_law", params).execute()
     return r.data or []
 
 
-def keyword_search(query: str, top_k: int = 10, project_id: str | None = None) -> list[dict]:
+def keyword_search(
+    query: str, top_k: int = 10, project_id: str | None = None,
+    doc_ids: set[str] | None = None,
+) -> list[dict]:
     """Full-text keyword search on tax_law_chunks using PostgreSQL websearch."""
     sb = get_supabase()
     try:
@@ -56,6 +72,8 @@ def keyword_search(query: str, top_k: int = 10, project_id: str | None = None) -
         )
         if project_id:
             q = q.eq("project_id", project_id)
+        if doc_ids is not None:
+            q = q.in_("document_id", list(doc_ids))
         r = q.limit(top_k).execute()
         results = r.data or []
         for chunk in results:
@@ -177,17 +195,35 @@ def rerank(query: str, chunks: list[dict], top_k: int = 6) -> list[dict]:
     return rerank_with_llm(query, chunks, top_k)
 
 
-def retrieve(query: str, top_k: int = 6, project_id: str | None = None) -> list[dict]:
+def retrieve(
+    query: str, top_k: int = 6, project_id: str | None = None,
+    tags: list[str] | None = None,
+) -> list[dict]:
     """
     Full retrieval pipeline: embed -> hybrid search -> RRF fusion -> rerank.
 
     Uses Cohere Rerank 3.5 when available, falls back to GPT-4o-mini.
+    When tags are provided, results are scoped to documents matching those tags.
     This is the main entry point called by app.py.
     """
+    # Pre-fetch matching document IDs when tag filtering
+    doc_ids: set[str] | None = None
+    if tags:
+        doc_ids = _get_tagged_doc_ids(tags, project_id)
+        if not doc_ids:
+            return []  # No documents match the tags
+
     embedding = embed_query(query)
 
-    vec_results = vector_search(embedding, top_k=top_k * 3, threshold=0.3, project_id=project_id)
-    kw_results = keyword_search(query, top_k=top_k * 3, project_id=project_id)
+    # Over-fetch when tag-filtering to compensate for post-filter reduction
+    fetch_k = top_k * 6 if doc_ids else top_k * 3
+
+    vec_results = vector_search(embedding, top_k=fetch_k, threshold=0.3, project_id=project_id)
+    kw_results = keyword_search(query, top_k=fetch_k, project_id=project_id, doc_ids=doc_ids)
+
+    # Post-filter vector results by tagged document IDs
+    if doc_ids is not None:
+        vec_results = [c for c in vec_results if c.get("document_id") in doc_ids]
 
     fused = rrf_fuse(vec_results, kw_results)
 

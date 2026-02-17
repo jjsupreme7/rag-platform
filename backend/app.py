@@ -324,6 +324,7 @@ def list_documents(
     category: str | None = Query(None),
     source_type: str | None = Query(None),
     project_id: str | None = Query(None),
+    tag: str | None = Query(None),
 ):
     sb = get_supabase()
     query = sb.table("knowledge_documents").select(
@@ -337,6 +338,8 @@ def list_documents(
         query = query.eq("law_category", category)
     if source_type:
         query = query.eq("source_type", source_type)
+    if tag:
+        query = query.contains("topic_tags", [tag])
     query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
     r = query.execute()
     return {"documents": r.data, "total": r.count}
@@ -382,6 +385,33 @@ def get_source_types(project_id: str | None = Query(None)):
             break
         offset += batch
     return {"source_types": counts}
+
+
+@app.get("/api/documents/tags")
+def get_tags(
+    project_id: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Return the most common topic tags with their document counts."""
+    sb = get_supabase()
+    counts: dict[str, int] = {}
+    offset = 0
+    batch = 1000
+    while True:
+        q = sb.table("knowledge_documents").select("topic_tags")
+        if project_id:
+            q = q.eq("project_id", project_id)
+        r = q.range(offset, offset + batch - 1).execute()
+        rows = r.data or []
+        for row in rows:
+            tags = row.get("topic_tags") or []
+            for tag in tags:
+                counts[tag] = counts.get(tag, 0) + 1
+        if len(rows) < batch:
+            break
+        offset += batch
+    sorted_tags = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    return {"tags": [{"tag": t, "count": c} for t, c in sorted_tags]}
 
 
 @app.get("/api/chat/recent")
@@ -441,12 +471,13 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     threshold: float = 0.3
     project_id: str | None = None
+    tags: list[str] | None = None
 
 
 @app.post("/api/search")
 @limiter.limit("60/minute")
 def search(request: Request, req: SearchRequest):
-    results = retrieve(req.query, req.top_k, project_id=req.project_id)
+    results = retrieve(req.query, req.top_k, project_id=req.project_id, tags=req.tags)
     return {
         "query": req.query,
         "results": results,
@@ -469,6 +500,7 @@ class ChatRequest(BaseModel):
     top_k: int = 6
     project_id: str | None = None
     model_override: str | None = None
+    tags: list[str] | None = None
 
 
 DEFAULT_SYSTEM_PROMPT = """You are an expert Washington State tax law assistant with access to a knowledge base of legal documents, WAC/RCW codes, Excise Tax Advisories, and WA Department of Revenue guidance. You also have access to live web search results from dor.wa.gov, app.leg.wa.gov (RCW statutes, WAC regulations), and taxpedia.dor.wa.gov (tax determinations).
@@ -581,7 +613,7 @@ def chat(request: Request, req: ChatRequest):
         chat_model, complexity = route_model(req.message, len(req.history))
 
     # 1. Retrieve relevant chunks via hybrid search + reranking
-    chunks = retrieve(req.message, req.top_k, project_id=req.project_id)
+    chunks = retrieve(req.message, req.top_k, project_id=req.project_id, tags=req.tags)
 
     # 1b. Augment with Perplexity live web search (parallel source)
     try:
